@@ -52,6 +52,8 @@ interface FastApiEnv {
   DISABLE_AUTH?: string,
   /** Absolute path to the resolved LibreOffice executable discovered at startup. */
   SOFFICE_PATH?: string,
+  /** Office renderer for PPTX/office conversion (always libreoffice when set). */
+  PRESENTON_OFFICE_RENDERER?: string,
   /** Absolute path to the ImageMagick binary resolved at startup by imagemagick-check.ts. */
   IMAGEMAGICK_BINARY?: string,
   /** Absolute path to the bundled LiteParse runner script. */

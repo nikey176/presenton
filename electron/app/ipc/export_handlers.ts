@@ -1,5 +1,5 @@
 import { ipcMain } from "electron";
-import { baseDir, getAppDataDir, getDownloadsDir, getTempDir } from "../utils/constants";
+import { baseDir, getAppDataDir, getCacheDir, getDownloadsDir, getTempDir } from "../utils/constants";
 import fs from "fs";
 import path from "path";
 
@@ -14,9 +14,9 @@ import { killProcess } from "../utils";
 import {
   isExportChromiumAvailable,
   removeBrokenExportChromiumCaches,
-  resolveInstalledExportChromiumPath,
+  resolveLaunchableExportChromiumPath,
 } from "../utils/export-chromium";
-import { resolveExportSpawnTarget } from "../utils/export-msix-runtime";
+import { isWindowsStoreInstall, resolveExportSpawnTarget } from "../utils/export-msix-runtime";
 
 type BinaryFormat = "elf" | "mach-o" | "pe" | "unknown";
 type RuntimeCandidate = {
@@ -117,15 +117,23 @@ export function setupExportHandlers() {
         NEXT_PUBLIC_URL: process.env.NEXT_PUBLIC_URL,
         NEXT_PUBLIC_FAST_API: process.env.NEXT_PUBLIC_FAST_API,
       });
-      const chromiumExecutablePath = resolveInstalledExportChromiumPath();
+      const chromiumExecutablePath = await resolveLaunchableExportChromiumPath();
+      if (!chromiumExecutablePath) {
+        return {
+          success: false,
+          message:
+            "Export could not prepare Chromium for this Microsoft Store install. Restart Presenton and try again.",
+        };
+      }
       const baseExportEnv = {
         ...process.env,
         TEMP_DIRECTORY: tempDir,
         APP_DATA_DIRECTORY: appDataDir,
         NODE_ENV: "development",
         BUILT_PYTHON_MODULE_PATH: pythonModulePath,
-        ...(chromiumExecutablePath && {
-          PUPPETEER_EXECUTABLE_PATH: chromiumExecutablePath,
+        PUPPETEER_EXECUTABLE_PATH: chromiumExecutablePath,
+        ...(isWindowsStoreInstall() && {
+          PUPPETEER_CACHE_DIR: path.join(getCacheDir(), "puppeteer"),
         }),
       };
       const responsePath = exportTaskPath.replace(".json", ".response.json");

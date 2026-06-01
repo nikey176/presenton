@@ -32,8 +32,8 @@ export function getSetupStatus(): SetupStatus | null {
  * Checks LibreOffice, ImageMagick, and export Chromium. If all are present,
  * returns immediately. If any are missing, opens one installer window that runs
  * each missing setup step in sequence. Returns true only when all required
- * dependencies are installed; false when the installer is closed/skipped before
- * completion.
+ * dependencies are installed; false when the installer is closed or skipped
+ * before completion.
  */
 export async function checkDependenciesBeforeWindow(): Promise<boolean> {
   await removeBrokenExportChromiumCaches();
@@ -60,14 +60,17 @@ export async function checkDependenciesBeforeWindow(): Promise<boolean> {
 
   await showSetupInstallerWindow();
 
-  const [postLoResult, postImageMagickInstalled, postChromiumInstalled] = await Promise.all([
-    isLibreOfficeInstalled(),
-    Promise.resolve(isImageMagickInstalled()),
-    Promise.resolve(isExportChromiumAvailable()),
-  ]);
+  const [postLoResult, postImageMagickInstalled, postChromiumInstalled] =
+    await Promise.all([
+      isLibreOfficeInstalled(),
+      Promise.resolve(isImageMagickInstalled()),
+      Promise.resolve(isExportChromiumAvailable()),
+    ]);
 
   currentSetupStatus = null;
-  return postLoResult.installed && postImageMagickInstalled && postChromiumInstalled;
+  return (
+    postLoResult.installed && postImageMagickInstalled && postChromiumInstalled
+  );
 }
 
 /**

@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
+import { baseDir } from "./constants";
 
 let resolvedImageMagickBinaryPath = process.platform === "win32" ? "magick" : "convert";
 
@@ -36,6 +37,22 @@ function getWindowsInstallRootCandidates(): string[] {
   roots.add(path.join(os.homedir(), "AppData", "Local"));
 
   return Array.from(roots);
+}
+
+function collectBundledImageMagickBinaryCandidates(): string[] {
+  const runtimeRoot = path.join(baseDir, "resources", "imagemagick");
+  const platformArch = `${process.platform}-${process.arch}`;
+  const executableName = process.platform === "win32" ? "magick.exe" : "magick";
+  const legacyExecutableName = process.platform === "win32" ? "convert.exe" : "convert";
+
+  return [
+    path.join(runtimeRoot, platformArch, "bin", executableName),
+    path.join(runtimeRoot, platformArch, executableName),
+    path.join(runtimeRoot, platformArch, "bin", legacyExecutableName),
+    path.join(runtimeRoot, platformArch, legacyExecutableName),
+    path.join(runtimeRoot, "bin", executableName),
+    path.join(runtimeRoot, executableName),
+  ];
 }
 
 export function getWindowsImageMagickInstallDir(): string {
@@ -117,6 +134,12 @@ function collectDarwinBrewImageMagickCandidates(): string[] {
 }
 
 function resolveImageMagickBinaryPath(): string | null {
+  for (const candidate of collectBundledImageMagickBinaryCandidates()) {
+    if (fs.existsSync(candidate) && canExecute(candidate, ["-version"])) {
+      return candidate;
+    }
+  }
+
   const commandCandidates = process.platform === "win32" ? ["magick"] : ["magick", "convert"];
   for (const candidate of commandCandidates) {
     if (canExecute(candidate, ["-version"])) {

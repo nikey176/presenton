@@ -353,6 +353,7 @@ async function startServers(fastApiPort: number, nextjsPort: number) {
         // Python invoke the exact binary path instead of relying on PATH.
         ...(sofficePath && {
           SOFFICE_PATH: sofficePath,
+          PRESENTON_OFFICE_RENDERER: "libreoffice",
         }),
         IMAGEMAGICK_BINARY: getImageMagickBinaryPath(),
         LITEPARSE_RUNNER_PATH: getLiteParseRunnerPath(),

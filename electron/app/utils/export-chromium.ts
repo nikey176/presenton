@@ -8,7 +8,9 @@ import {
   detectBrowserPlatform,
   install,
 } from "@puppeteer/browsers";
-import { safeLog } from "./safe-console";
+import { baseDir, getCacheDir } from "./constants";
+import { isWindowsStoreInstall } from "./export-msix-runtime";
+import { safeError, safeLog } from "./safe-console";
 
 /** Must match the Chrome revision expected by the bundled presentation-export runtime. */
 const EXPORT_CHROME_BUILD_ID =
@@ -28,7 +30,11 @@ function resolvePuppeteerCacheRoot(): string {
   return path.join(os.homedir(), ".cache", "puppeteer");
 }
 
-function resolveExportChromeInstallOptions():
+export function getBundledExportChromiumCacheRoot(): string {
+  return path.join(baseDir, "resources", "chromium");
+}
+
+function resolveExportChromeInstallOptions(cacheDir = resolvePuppeteerCacheRoot()):
   | { browser: Browser.CHROME; buildId: string; cacheDir: string; platform: NonNullable<ReturnType<typeof detectBrowserPlatform>> }
   | null {
   const platform = detectBrowserPlatform();
@@ -38,7 +44,7 @@ function resolveExportChromeInstallOptions():
   return {
     browser: Browser.CHROME,
     buildId: EXPORT_CHROME_BUILD_ID,
-    cacheDir: resolvePuppeteerCacheRoot(),
+    cacheDir,
     platform,
   };
 }
@@ -86,6 +92,24 @@ function resolveLegacyInstalledExportChromiumPath(): string | null {
 }
 
 export function resolveInstalledExportChromiumPath(): string | null {
+  const bundledOptions = resolveExportChromeInstallOptions(getBundledExportChromiumCacheRoot());
+  if (bundledOptions) {
+    const bundledExpectedPath = computeExecutablePath(bundledOptions);
+    if (fs.existsSync(bundledExpectedPath)) {
+      return bundledExpectedPath;
+    }
+
+    const bundledCache = new Cache(bundledOptions.cacheDir);
+    for (const installed of bundledCache.getInstalledBrowsers()) {
+      if (installed.browser !== Browser.CHROME || installed.buildId !== bundledOptions.buildId) {
+        continue;
+      }
+      if (fs.existsSync(installed.executablePath)) {
+        return installed.executablePath;
+      }
+    }
+  }
+
   const options = resolveExportChromeInstallOptions();
   if (options) {
     const expectedPath = computeExecutablePath(options);
@@ -109,6 +133,75 @@ export function resolveInstalledExportChromiumPath(): string | null {
 
 export function isExportChromiumAvailable(): boolean {
   return Boolean(resolveInstalledExportChromiumPath());
+}
+
+function isPathUnderWindowsApps(filePath: string): boolean {
+  return /\\windowsapps\\/i.test(filePath);
+}
+
+function getMsixChromiumCacheRoot(): string {
+  return path.join(getCacheDir(), "msix-export-chromium", EXPORT_CHROME_BUILD_ID);
+}
+
+/**
+ * MSIX/APPX installs keep the app under Program Files\\WindowsApps. Chrome cannot
+ * reliably launch from that read-only package, so copy the browser folder to user cache.
+ */
+async function materializeBundledChromiumForMsix(bundledExePath: string): Promise<string> {
+  const browserDir = path.dirname(bundledExePath);
+  const revisionDir = path.dirname(browserDir);
+  const revisionName = path.basename(revisionDir);
+  const cacheRoot = getMsixChromiumCacheRoot();
+  const destRevisionDir = path.join(cacheRoot, "chrome", revisionName);
+  const destExe = path.join(destRevisionDir, path.basename(browserDir), path.basename(bundledExePath));
+  const stampPath = path.join(cacheRoot, ".source-revision-dir");
+
+  if (fs.existsSync(destExe)) {
+    try {
+      if ((await fs.promises.readFile(stampPath, "utf8")).trim() === revisionDir) {
+        return destExe;
+      }
+    } catch {
+      // Stale cache; recopy below.
+    }
+  }
+
+  safeLog(
+    "[Chromium] Copying bundled Chrome for Microsoft Store install:",
+    destRevisionDir
+  );
+  await fs.promises.rm(cacheRoot, { recursive: true, force: true });
+  await fs.promises.mkdir(path.dirname(destRevisionDir), { recursive: true });
+  await fs.promises.cp(revisionDir, destRevisionDir, { recursive: true });
+  await fs.promises.writeFile(stampPath, revisionDir, "utf8");
+
+  if (!fs.existsSync(destExe)) {
+    throw new Error(`Chrome executable missing after MSIX materialization: ${destExe}`);
+  }
+  return destExe;
+}
+
+/**
+ * Resolves a Chrome binary path that can actually be spawned (writable on MSIX/APPX).
+ */
+export async function resolveLaunchableExportChromiumPath(): Promise<string | null> {
+  const installed = resolveInstalledExportChromiumPath();
+  if (!installed) {
+    return null;
+  }
+
+  const mustMaterialize =
+    isWindowsStoreInstall() || isPathUnderWindowsApps(installed);
+  if (!mustMaterialize) {
+    return installed;
+  }
+
+  try {
+    return await materializeBundledChromiumForMsix(installed);
+  } catch (error) {
+    safeError("[Chromium] Failed to prepare Chrome for Microsoft Store export", error);
+    return null;
+  }
 }
 
 export async function removeBrokenExportChromiumCaches(): Promise<number> {
