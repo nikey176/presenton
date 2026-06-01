@@ -31,6 +31,7 @@ electron/.cache/export-runtime/
 # presenton-export runtime (downloaded via npm run setup:export-runtime / sync_export_runtime.js)
 resources/export/
 *.pkg
+*.provisionprofile
 *.toc
 *.zip
 *.pyc
