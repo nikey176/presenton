@@ -320,11 +320,15 @@ function resolveMacPrefixFromMagickBinary(magickPath) {
   return fs.existsSync(path.join(prefix, "bin", "magick")) ? prefix : null;
 }
 
-function resolveMacPrefixFromBrew() {
-  const brewCandidates = [resolveCommandPath("brew"), "/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+function listBrewCandidates() {
+  return [resolveCommandPath("brew"), "/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
     .filter(Boolean)
     .filter((candidate, index, all) => all.indexOf(candidate) === index)
     .filter((candidate) => fs.existsSync(candidate));
+}
+
+function resolveMacPrefixFromBrew() {
+  const brewCandidates = listBrewCandidates();
   const formulas = ["imagemagick", "imagemagick@6"];
 
   for (const brew of brewCandidates) {
@@ -340,6 +344,22 @@ function resolveMacPrefixFromBrew() {
     }
   }
   return null;
+}
+
+function ensureMacImageMagickWithBrew() {
+  for (const brew of listBrewCandidates()) {
+    log(`ImageMagick not found; trying to install with Homebrew (${brew} install imagemagick).`);
+    const install = spawnSync(brew, ["install", "imagemagick"], {
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    if (install.status === 0) {
+      return true;
+    }
+    const reason = install.error?.message || `exit ${install.status}`;
+    log(`Homebrew installation attempt failed via ${brew}: ${reason}`);
+  }
+  return false;
 }
 
 function resolveMacSourcePrefix() {
@@ -371,7 +391,16 @@ function resolveMacSourcePrefix() {
     }
   }
 
-  fail("Could not find a macOS ImageMagick runtime to vendor. Install ImageMagick (e.g. brew install imagemagick), ensure magick is reachable, or set IMAGEMAGICK_VENDOR_DIR.");
+  if (ensureMacImageMagickWithBrew()) {
+    const installedPrefix = resolveMacPrefixFromMagickBinary(resolveCommandPath("magick"))
+      || resolveMacPrefixFromBrew();
+    if (installedPrefix) {
+      return installedPrefix;
+    }
+    log("Homebrew install succeeded but ImageMagick prefix was not auto-detected; continuing with fallback checks.");
+  }
+
+  fail("Could not find a macOS ImageMagick runtime to vendor. Install ImageMagick (brew install imagemagick) and rerun, or set IMAGEMAGICK_VENDOR_DIR.");
 }
 
 function parseOtoolDeps(filePath) {
