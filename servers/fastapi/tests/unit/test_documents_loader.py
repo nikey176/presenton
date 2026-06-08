@@ -4,7 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 
+from services.document_conversion_service import DocumentConversionService
 from services.documents_loader import (
     DocumentsLoader,
     _unwrap_liteparse_json_line_if_stored,
@@ -62,6 +64,40 @@ def test_load_pdf_requires_temp_dir_when_images_are_requested():
 
     assert exc.value.status_code == 400
     assert "temp_dir is required" in exc.value.detail
+
+
+def test_convert_image_to_png_writes_png_file(tmp_path):
+    source_path = tmp_path / "upload.jpg"
+    output_dir = tmp_path / "converted"
+    Image.new("RGB", (8, 8), "white").save(source_path, format="JPEG")
+
+    converted_path = DocumentConversionService().convert_image_to_png(
+        str(source_path),
+        str(output_dir),
+    )
+
+    assert converted_path.endswith(".png")
+    with Image.open(converted_path) as image:
+        assert image.format == "PNG"
+        assert image.mode == "RGB"
+
+
+@patch("services.documents_loader.DocumentsLoader._parse_with_liteparse")
+@patch("services.documents_loader.DocumentConversionService.convert_image_to_png")
+def test_load_image_converts_to_png_before_ocr(mock_convert, mock_parse):
+    mock_convert.return_value = "/tmp/converted.png"
+    mock_parse.return_value = "image text"
+    loader = DocumentsLoader(file_paths=[])
+
+    result = loader.load_image("/tmp/upload.webp", "/tmp/conversions")
+
+    assert result == "image text"
+    mock_convert.assert_called_once_with(
+        "/tmp/upload.webp",
+        "/tmp/conversions",
+        timeout_seconds=DocumentsLoader.DECOMPOSE_TIMEOUT_SECONDS,
+    )
+    mock_parse.assert_called_once_with("/tmp/converted.png", dpi=300)
 
 
 def _make_mock_page(text: str) -> MagicMock:
