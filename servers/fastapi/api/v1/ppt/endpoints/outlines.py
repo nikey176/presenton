@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import traceback
 import uuid
 import dirtyjson
@@ -30,8 +31,10 @@ from utils.llm_calls.generate_presentation_outlines import (
     generate_ppt_outline,
     get_messages as get_outline_messages,
 )
+from utils.web_search import get_selected_web_search_provider, get_web_search_route
 
 OUTLINES_ROUTER = APIRouter(prefix="/outlines", tags=["Outlines"])
+LOGGER = logging.getLogger(__name__)
 
 
 @OUTLINES_ROUTER.get("/stream/{id}")
@@ -42,6 +45,21 @@ async def stream_outlines(
 
     if not presentation:
         raise HTTPException(status_code=404, detail="Presentation not found")
+
+    search_route, actual_search_provider = get_web_search_route()
+    LOGGER.info(
+        "Starting outline stream: presentation_id=%s web_search_enabled=%s "
+        "selected_web_search_provider=%s web_search_route=%s actual_web_search_provider=%s",
+        presentation.id,
+        presentation.web_search,
+        get_selected_web_search_provider().value,
+        search_route,
+        (
+            actual_search_provider.value
+            if actual_search_provider
+            else ("model-native" if search_route == "native" else "none")
+        ),
+    )
 
     temp_dir = TEMP_FILE_SERVICE.create_temp_dir()
 

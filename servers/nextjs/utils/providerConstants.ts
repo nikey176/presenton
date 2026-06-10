@@ -41,13 +41,9 @@ export interface WebSearchProviderOption {
 export const WEB_SEARCH_PROVIDERS: Record<string, WebSearchProviderOption> = {
   auto: {
     value: "auto",
-    label: "Auto",
-    description: "Use native model search when supported, otherwise use a configured external provider or DuckDuckGo.",
-  },
-  native: {
-    value: "native",
-    label: "Native model search",
-    description: "Use hosted search from OpenAI, Google, or Anthropic. Unsupported text providers will not search.",
+    label: "Default (Model)",
+    description:
+      "Use model-native web grounding when available, otherwise fallback to external search.",
   },
   duckduckgo: {
     value: "duckduckgo",
@@ -67,20 +63,6 @@ export const WEB_SEARCH_PROVIDERS: Record<string, WebSearchProviderOption> = {
     description: "Search API optimized for AI applications.",
     apiKeyField: "TAVILY_API_KEY",
     apiKeyLabel: "Tavily API key",
-  },
-  brave: {
-    value: "brave",
-    label: "Brave Search",
-    description: "Independent web search API from Brave.",
-    apiKeyField: "BRAVE_SEARCH_API_KEY",
-    apiKeyLabel: "Brave Search API key",
-  },
-  serper: {
-    value: "serper",
-    label: "Serper",
-    description: "Google search results through the Serper API.",
-    apiKeyField: "SERPER_API_KEY",
-    apiKeyLabel: "Serper API key",
   },
 };
 

@@ -37,6 +37,12 @@ export const normalizeLLMConfig = (llmConfig: LLMConfig): LLMConfig => {
   if (parsedDisableImageGeneration !== undefined) {
     normalizedConfig.DISABLE_IMAGE_GENERATION = parsedDisableImageGeneration;
   }
+  const parsedWebGrounding = parseOptionalBool(
+    (normalizedConfig as Record<string, unknown>).WEB_GROUNDING
+  );
+  if (parsedWebGrounding !== undefined) {
+    normalizedConfig.WEB_GROUNDING = parsedWebGrounding;
+  }
 
   if (normalizedConfig.DISABLE_IMAGE_GENERATION || normalizedConfig.IMAGE_PROVIDER) {
     return normalizedConfig;
@@ -264,27 +270,19 @@ export const getLLMConfigValidationError = (
     }
   }
 
-  switch (llmConfig.WEB_SEARCH_PROVIDER) {
-    case "searxng":
-      if (!isProvided(llmConfig.SEARXNG_BASE_URL)) {
-        return "SearXNG base URL is required.";
-      }
-      break;
-    case "tavily":
-      if (!isProvided(llmConfig.TAVILY_API_KEY)) {
-        return "Tavily API key is required.";
-      }
-      break;
-    case "brave":
-      if (!isProvided(llmConfig.BRAVE_SEARCH_API_KEY)) {
-        return "Brave Search API key is required.";
-      }
-      break;
-    case "serper":
-      if (!isProvided(llmConfig.SERPER_API_KEY)) {
-        return "Serper API key is required.";
-      }
-      break;
+  if (llmConfig.WEB_GROUNDING) {
+    switch (llmConfig.WEB_SEARCH_PROVIDER) {
+      case "searxng":
+        if (!isProvided(llmConfig.SEARXNG_BASE_URL)) {
+          return "SearXNG base URL is required.";
+        }
+        break;
+      case "tavily":
+        if (!isProvided(llmConfig.TAVILY_API_KEY)) {
+          return "Tavily API key is required.";
+        }
+        break;
+    }
   }
 
   return null;

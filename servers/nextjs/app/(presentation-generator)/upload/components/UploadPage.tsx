@@ -10,7 +10,7 @@
  */
 
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useDispatch, useSelector } from "react-redux";
 import { clearOutlines, setPresentationId } from "@/store/slices/presentationGeneration";
@@ -129,6 +129,15 @@ const UploadPage = () => {
     includeTitleSlide: false,
     webSearch: false,
   });
+
+  useEffect(() => {
+    if (llmConfig?.WEB_GROUNDING !== undefined) {
+      setConfig((current) => ({
+        ...current,
+        webSearch: !!llmConfig.WEB_GROUNDING,
+      }));
+    }
+  }, [llmConfig?.WEB_GROUNDING]);
 
   const [loadingState, setLoadingState] = useState<LoadingState>({
     isLoading: false,
@@ -381,7 +390,7 @@ const UploadPage = () => {
       />
       <div className="rounded-2xl " >
         <div className="flex flex-col gap-4 md:items-center md:flex-row justify-between px-4 ">
-          <CurrentConfig />
+          <CurrentConfig webSearchEnabled={config.webSearch} />
           <ConfigurationSelects
             config={config}
             onConfigChange={handleConfigChange}

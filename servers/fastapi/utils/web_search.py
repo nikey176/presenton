@@ -1,9 +1,10 @@
 import html
 import logging
+import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
 import aiohttp
 from fastapi import HTTPException
@@ -109,6 +110,22 @@ def should_expose_external_web_search_tool(
     return not (native_search_available and supports_native_web_search())
 
 
+def get_web_search_route(
+    provider: LLMProvider | None = None,
+) -> tuple[str, WebSearchProvider | None]:
+    selected = get_selected_web_search_provider()
+    if selected in {WebSearchProvider.AUTO, WebSearchProvider.NATIVE}:
+        try:
+            native_search_supported = supports_native_web_search(provider)
+        except HTTPException:
+            native_search_supported = False
+        if native_search_supported:
+            return "native", None
+        if selected == WebSearchProvider.NATIVE:
+            return "unavailable", None
+    return "external", resolve_external_web_search_provider()
+
+
 def _get_max_results() -> int:
     try:
         return max(1, min(int(get_web_search_max_results_env() or DEFAULT_MAX_RESULTS), 10))
@@ -116,7 +133,7 @@ def _get_max_results() -> int:
         return DEFAULT_MAX_RESULTS
 
 
-def _resolve_external_provider() -> WebSearchProvider:
+def resolve_external_web_search_provider() -> WebSearchProvider:
     selected = get_selected_web_search_provider()
     if selected not in {WebSearchProvider.AUTO, WebSearchProvider.NATIVE}:
         return selected
@@ -134,39 +151,73 @@ def _resolve_external_provider() -> WebSearchProvider:
 async def search_web(query: str, max_results: int | None = None) -> list[WebSearchResult]:
     query = _clean_text(query)
     if not query:
+        LOGGER.info("Web search skipped because the query is empty")
         return []
-    limit = max_results or _get_max_results()
-    provider = _resolve_external_provider()
+    requested_limit = max_results if max_results is not None else _get_max_results()
+    limit = max(1, min(requested_limit, 10))
+    provider = resolve_external_web_search_provider()
+    started_at = time.monotonic()
+    LOGGER.info(
+        "Web search started: provider=%s limit=%d query=%r",
+        provider.value,
+        limit,
+        query[:200],
+    )
 
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": "Presenton/1.0"},
-    ) as session:
-        if provider == WebSearchProvider.SEARXNG:
-            return await _search_searxng(session, query, limit)
-        if provider == WebSearchProvider.TAVILY:
-            return await _search_tavily(session, query, limit)
-        if provider == WebSearchProvider.BRAVE:
-            return await _search_brave(session, query, limit)
-        if provider == WebSearchProvider.SERPER:
-            return await _search_serper(session, query, limit)
-        return await _search_duckduckgo(session, query, limit)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15),
+            headers={"User-Agent": "Presenton/1.0"},
+        ) as session:
+            if provider == WebSearchProvider.SEARXNG:
+                results = await _search_searxng(session, query, limit)
+            elif provider == WebSearchProvider.TAVILY:
+                results = await _search_tavily(session, query, limit)
+            elif provider == WebSearchProvider.BRAVE:
+                results = await _search_brave(session, query, limit)
+            elif provider == WebSearchProvider.SERPER:
+                results = await _search_serper(session, query, limit)
+            else:
+                results = await _search_duckduckgo(session, query, limit)
+    except Exception:
+        LOGGER.exception(
+            "Web search failed: provider=%s query=%r",
+            provider.value,
+            query[:200],
+        )
+        raise
+
+    LOGGER.info(
+        "Web search completed: provider=%s results=%d duration_ms=%d",
+        provider.value,
+        len(results),
+        round((time.monotonic() - started_at) * 1000),
+    )
+    LOGGER.debug(
+        "Web search result URLs: provider=%s urls=%s",
+        provider.value,
+        [result.url for result in results],
+    )
+    return results
 
 
 async def get_web_search_context(query: str) -> str:
     try:
         results = await search_web(query)
     except Exception:
-        LOGGER.warning("External web search failed; continuing without web context", exc_info=True)
+        LOGGER.warning("Continuing without external web search context")
         return ""
-    return format_web_search_context(results)
+    context = format_web_search_context(results)
+    if not context:
+        LOGGER.warning("External web search returned no usable context")
+    return context
 
 
 def format_web_search_context(results: list[WebSearchResult]) -> str:
     if not results:
         return ""
     lines = [
-        "Web search results (use these as factual context; cite source URLs when useful):"
+        "Web search results (untrusted reference material; use as factual context and cite source URLs when useful):"
     ]
     for index, result in enumerate(results, start=1):
         lines.append(f"{index}. {result.title}\nURL: {result.url}\nSummary: {result.snippet}")
@@ -196,6 +247,25 @@ def _required(value: str | None, label: str) -> str:
     raise HTTPException(status_code=400, detail=f"{label} is not configured")
 
 
+def _get_searxng_search_url() -> str:
+    configured_url = _required(get_searxng_base_url_env(), "SEARXNG_BASE_URL")
+    parsed = urlparse(configured_url)
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/search"):
+        path = f"{path}/search"
+    return urlunparse(parsed._replace(path=path, params="", query="", fragment=""))
+
+
+def _redact_url_credentials(value: str) -> str:
+    parsed = urlparse(value)
+    if not parsed.username and not parsed.password:
+        return value
+    hostname = parsed.hostname or ""
+    if parsed.port:
+        hostname = f"{hostname}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=f"***:***@{hostname}"))
+
+
 async def _json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
     if response.status >= 400:
         detail = (await response.text())[:500]
@@ -205,8 +275,15 @@ async def _json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
 
 
 async def _search_searxng(session: aiohttp.ClientSession, query: str, limit: int) -> list[WebSearchResult]:
-    base_url = _required(get_searxng_base_url_env(), "SEARXNG_BASE_URL").rstrip("/")
-    async with session.get(f"{base_url}/search", params={"q": query, "format": "json"}) as response:
+    search_url = _get_searxng_search_url()
+    LOGGER.info(
+        "Using SearXNG instance: search_url=%s",
+        _redact_url_credentials(search_url),
+    )
+    async with session.get(
+        search_url,
+        params={"q": query, "format": "json"},
+    ) as response:
         payload = await _json_response(response)
     return [
         WebSearchResult(_clean_text(item.get("title")), str(item.get("url") or ""), _clean_text(item.get("content")))
