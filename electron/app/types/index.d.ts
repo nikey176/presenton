@@ -50,10 +50,6 @@ interface FastApiEnv {
   USER_CONFIG_PATH?: string,
   MIGRATE_DATABASE_ON_STARTUP?: string,
   DISABLE_AUTH?: string,
-  /** Absolute path to the resolved LibreOffice executable discovered at startup. */
-  SOFFICE_PATH?: string,
-  /** Office renderer for PPTX/office conversion (always libreoffice when set). */
-  PRESENTON_OFFICE_RENDERER?: string,
   /** Absolute path to the bundled/resolved ImageMagick magick executable. */
   IMAGEMAGICK_BINARY?: string,
   /** ImageMagick runtime root used by the bundled portable build. */

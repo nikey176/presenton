@@ -19,8 +19,6 @@ import {
 } from "./utils/constants";
 import { setupIpcHandlers } from "./ipc";
 import { stopActiveExportProcesses } from "./ipc/export_handlers";
-import { setupLibreOfficeInstallHandlers, stopActiveLibreOfficeInstallProcesses } from "./ipc/libreoffice_install_handlers";
-import { getSofficePath } from "./utils/libreoffice-check";
 import { getLiteParseRunnerPath } from "./utils/liteparse-check";
 import {
   buildPathWithImageMagick,
@@ -307,7 +305,6 @@ async function startServers(fastApiPort: number, nextjsPort: number) {
     const tempDir = getTempDir();
     const userConfigPath = getUserConfigPath();
     const disableAuthForElectron = resolveElectronDisableAuth();
-    const sofficePath = getSofficePath();
     const imageMagickRuntime = resolveImageMagickRuntime();
     const exportPackageRoot = path.join(baseDir, "resources", "export");
     const exportConverterPath = resolveExportConverterPath(baseDir);
@@ -373,12 +370,6 @@ async function startServers(fastApiPort: number, nextjsPort: number) {
         USER_CONFIG_PATH: userConfigPath,
         MIGRATE_DATABASE_ON_STARTUP: "True",
         DISABLE_AUTH: disableAuthForElectron,
-        // Resolved by libreoffice-check.ts at startup when available; lets
-        // Python invoke the exact binary path instead of relying on PATH.
-        ...(sofficePath && {
-          SOFFICE_PATH: sofficePath,
-          PRESENTON_OFFICE_RENDERER: "libreoffice",
-        }),
         ...buildImageMagickEnv(imageMagickRuntime),
         LITEPARSE_RUNNER_PATH: getLiteParseRunnerPath(),
         // Use Electron's embedded runtime for LiteParse so parsing does not
@@ -445,7 +436,6 @@ async function forceQuitApp(exitCode = 0) {
   stopUpdateChecker();
   try {
     await stopActiveExportProcesses();
-    await stopActiveLibreOfficeInstallProcesses();
     await stopServers();
   } finally {
     app.exit(exitCode);
@@ -466,9 +456,6 @@ app.whenReady().then(async () => {
     chromiumCacheRecovery,
   );
   updateSentryRuntimeContext(chromiumCacheRecovery);
-
-  // Register LibreOffice handlers for Template Studio's on-demand installer.
-  setupLibreOfficeInstallHandlers();
 
   // Create main window and show the launch page while local servers boot.
   createWindow();

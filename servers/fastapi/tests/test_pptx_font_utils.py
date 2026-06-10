@@ -357,7 +357,7 @@ async def test_create_slide_previews_from_html_uses_converter_dimensions_and_fon
         FakeExportTaskService(),
     )
 
-    result = await fonts_and_slides_preview._create_slide_previews_from_html(
+    result = await fonts_and_slides_preview.render_pptx_slides_to_images(
         modified_pptx_path="deck.pptx",
         font_paths_for_install=[str(font_path)],
         max_slides=1,
@@ -374,7 +374,7 @@ async def test_create_slide_previews_from_html_uses_converter_dimensions_and_fon
 
 
 @pytest.mark.anyio
-async def test_create_slide_previews_prefers_html_render_path(monkeypatch, tmp_path):
+async def test_create_slide_previews_uses_html_render_path(monkeypatch, tmp_path):
     html_paths = [str(tmp_path / "slide1.png"), str(tmp_path / "slide2.png")]
 
     async def fake_create_from_html(
@@ -388,21 +388,13 @@ async def test_create_slide_previews_prefers_html_render_path(monkeypatch, tmp_p
         assert max_slides == 2
         return html_paths
 
-    async def fake_create_from_pdf(*_args, **_kwargs):
-        raise AssertionError("PDF fallback should not be used when HTML render succeeds")
-
     async def fake_persist_files_to_session(pairs):
         return [destination for destination, _source in pairs]
 
     monkeypatch.setattr(
         fonts_and_slides_preview,
-        "_create_slide_previews_from_html",
+        "render_pptx_slides_to_images",
         fake_create_from_html,
-    )
-    monkeypatch.setattr(
-        fonts_and_slides_preview,
-        "_create_slide_previews_from_pdf",
-        fake_create_from_pdf,
     )
     monkeypatch.setattr(
         fonts_and_slides_preview,
