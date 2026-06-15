@@ -24,9 +24,10 @@ import { notify } from "@/components/ui/sonner";
 import { getApiUrl } from "@/utils/api";
 import { Button } from "@/components/ui/button";
 import {
-    CHATGPT_MODELS,
+    CODEX_MODELS,
     DEFAULT_CODEX_MODEL,
-} from "@/components/CodexConfig";
+    isSupportedCodexModel,
+} from "@/utils/codexModels";
 import { useRouter } from "next/navigation";
 import { syncStoreAfterCodexSignOut } from "@/utils/storeHelpers";
 import { MixpanelEvent, trackEvent } from "@/utils/mixpanel";
@@ -76,6 +77,12 @@ export default function CodexConfig({
         checkCurrentAuthStatus();
         return () => stopPolling();
     }, []);
+
+    useEffect(() => {
+        if (codexModel && !isSupportedCodexModel(codexModel)) {
+            onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
+        }
+    }, [codexModel, onInputChange]);
 
     const applyProfile = (data: Partial<StatusResponse>) => {
         setAccountId(data.account_id ?? null);
@@ -133,7 +140,7 @@ export default function CodexConfig({
                         setAuthStatus("authenticated");
                         applyProfile(pollData);
                         setSessionId(null);
-                        if (!codexModel) {
+                        if (!isSupportedCodexModel(codexModel)) {
                             onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
                         }
                         notify.success(
@@ -182,7 +189,7 @@ export default function CodexConfig({
             applyProfile(data);
             setSessionId(null);
             setManualCode("");
-            if (!codexModel) {
+            if (!isSupportedCodexModel(codexModel)) {
                 onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
             }
             notify.success(
@@ -379,7 +386,7 @@ export default function CodexConfig({
                             >
                                 <span className="text-sm text-gray-900">
                                     {codexModel
-                                        ? (CHATGPT_MODELS.find((m) => m.id === codexModel)?.name ?? codexModel)
+                                        ? (CODEX_MODELS.find((m) => m.id === codexModel)?.name ?? codexModel)
                                         : "Select a model"}
                                 </span>
                                 <ChevronUp className="w-4 h-4 text-gray-400" />
@@ -395,7 +402,7 @@ export default function CodexConfig({
                                 <CommandList>
                                     <CommandEmpty>No model found.</CommandEmpty>
                                     <CommandGroup>
-                                        {CHATGPT_MODELS.map((model) => (
+                                        {CODEX_MODELS.map((model) => (
                                             <CommandItem
                                                 key={model.id}
                                                 value={model.id}
