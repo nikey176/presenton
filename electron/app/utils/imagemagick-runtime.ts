@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
-import { baseDir } from "./constants";
+import { resourceBaseDir } from "./constants";
 
 export type ImageMagickRuntime = {
   binaryPath: string;
@@ -89,7 +89,7 @@ function uniqueExistingDirs(paths: string[]): string[] {
 }
 
 export function getBundledImageMagickRoot(): string {
-  return path.join(baseDir, "resources", "imagemagick");
+  return path.join(resourceBaseDir, "resources", "imagemagick");
 }
 
 export function getBundledImageMagickDir(): string {

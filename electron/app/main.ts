@@ -17,6 +17,7 @@ import {
   isDev,
   localhost,
   nextjsDir,
+  resourceBaseDir,
 } from "./utils/constants";
 import { setupIpcHandlers } from "./ipc";
 import { stopActiveExportProcesses } from "./ipc/export_handlers";
@@ -217,7 +218,7 @@ const createWindow = () => {
     height: 720,
     show: false, // Reveal once the launch screen has painted to avoid a blank flash.
     backgroundColor: "#f3f5ff",
-    icon: path.join(baseDir, "resources/ui/assets/images/presenton_short_filled.png"),
+    icon: path.join(resourceBaseDir, "resources/ui/assets/images/presenton_short_filled.png"),
     webPreferences: {
         webSecurity: false,
         // Ensure a known preload path and explicit isolation settings so
@@ -314,8 +315,8 @@ async function startServers(fastApiPort: number, nextjsPort: number) {
     const userConfigPath = getUserConfigPath();
     const disableAuthForElectron = resolveElectronDisableAuth();
     const imageMagickRuntime = resolveImageMagickRuntime();
-    const exportPackageRoot = path.join(baseDir, "resources", "export");
-    const exportConverterPath = resolveExportConverterPath(baseDir);
+    const exportPackageRoot = path.join(resourceBaseDir, "resources", "export");
+    const exportConverterPath = resolveExportConverterPath(resourceBaseDir);
     const exportChromiumPath = await resolveLaunchableExportChromiumPath();
     const puppeteerCacheDir = path.join(getCacheDir(), "puppeteer");
     const puppeteerTempDir = path.join(tempDir, "puppeteer");
@@ -433,7 +434,7 @@ async function startServers(fastApiPort: number, nextjsPort: number) {
         APP_DATA_DIRECTORY: appDataDir,
         DISABLE_AUTH: disableAuthForElectron,
         EXPORT_PACKAGE_ROOT: exportPackageRoot,
-        PRESENTON_APP_ROOT: baseDir,
+        PRESENTON_APP_ROOT: resourceBaseDir,
         ...(exportConverterPath && {
           BUILT_PYTHON_MODULE_PATH: exportConverterPath,
         }),
@@ -496,7 +497,7 @@ app.whenReady().then(async () => {
   const initialWindow = getLiveMainWindow();
   if (initialWindow && !initialWindow.webContents.isDestroyed()) {
     void initialWindow
-      .loadFile(path.join(baseDir, "resources/ui/homepage/index.html"))
+      .loadFile(path.join(resourceBaseDir, "resources/ui/homepage/index.html"))
       .catch((error) => {
         if (!initialWindow.isDestroyed()) {
           safeWarn("[Presenton] Failed to load startup page", error);

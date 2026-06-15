@@ -9,7 +9,7 @@ import {
   detectBrowserPlatform,
   install,
 } from "@puppeteer/browsers";
-import { baseDir, getCacheDir } from "./constants";
+import { getCacheDir, resourceBaseDir } from "./constants";
 import { isWindowsStoreInstall } from "./export-msix-runtime";
 import { safeError, safeLog } from "./safe-console";
 
@@ -42,7 +42,7 @@ function resolvePuppeteerCacheRoot(): string {
 }
 
 export function getBundledExportChromiumCacheRoot(): string {
-  return path.join(baseDir, "resources", "chromium");
+  return path.join(resourceBaseDir, "resources", "chromium");
 }
 
 function readBundledChromiumManifest(): BundledChromiumManifest | null {

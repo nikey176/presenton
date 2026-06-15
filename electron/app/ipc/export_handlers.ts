@@ -1,5 +1,11 @@
 import { ipcMain } from "electron";
-import { baseDir, getAppDataDir, getCacheDir, getDownloadsDir, getTempDir } from "../utils/constants";
+import {
+  getAppDataDir,
+  getCacheDir,
+  getDownloadsDir,
+  getTempDir,
+  resourceBaseDir,
+} from "../utils/constants";
 import fs from "fs";
 import path from "path";
 
@@ -98,7 +104,7 @@ export function setupExportHandlers() {
       const exportTaskPath = path.join(exportTempDir, "export_task.json");
       await fs.promises.writeFile(exportTaskPath, JSON.stringify(exportTask));
 
-      const packagedExportRoot = path.join(baseDir, "resources", "export");
+      const packagedExportRoot = path.join(resourceBaseDir, "resources", "export");
       const packagedExportScriptPath = path.join(packagedExportRoot, "index.js");
       const { scriptPath: exportScriptPath, converterPath: pythonModulePath } =
         await resolveExportSpawnTarget(

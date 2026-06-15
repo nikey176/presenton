@@ -3,6 +3,9 @@ const { execFileSync } = require("child_process")
 const fs = require("fs")
 const path = require("path")
 const packageMetadata = require("./package.json")
+const {
+  normalizeBundledMacChromiumForPackaging,
+} = require("./scripts/prepare-export-chromium.cjs")
 
 const APP_ID = "com.presenton.presenton"
 const TEAM_ID = "S6W5C54KL6"
@@ -19,21 +22,25 @@ const masDevProvisioningProfile = resolveProvisioningProfileForTarget({
 const masProvisioningProfile = resolveProvisioningProfileForTarget({
   target: "mas",
   label: "Mac App Store distribution",
-  candidates: ["build/MacAppStore.provisionprofile"],
+  candidates: [
+    "build/MacAppStore.provisionprofile",
+    "build/AppDistri.provisionprofile",
+  ],
 })
 const masDevIdentity =
   process.env.PRESENTON_MAS_DEV_IDENTITY || process.env.CSC_NAME || ""
-const masDistributionIdentity =
-  process.env.PRESENTON_MAS_DISTRIBUTION_IDENTITY ||
-  process.env.PRESENTON_MAS_IDENTITY ||
-  process.env.CSC_NAME ||
-  ""
+const masSigningIdentities = resolveMasSigningIdentitiesForTarget()
+const masIdentityQualifier = masSigningIdentities.qualifier
+const masAppSigningIdentity = masSigningIdentities.appIdentity
+const masInstallerSigningIdentity = masSigningIdentities.installerIdentity
 const appStoreBundleShortVersion =
   macTarget === "mas" ? getAppStoreBundleShortVersion() : undefined
 const appStoreBundleVersion =
   macTarget === "mas"
     ? getAppStoreBundleVersion(appStoreBundleShortVersion)
     : undefined
+const masSigningExtraArgs =
+  process.env.PRESENTON_CODESIGN_TIMESTAMP === "1" ? [] : ["--timestamp=none"]
 
 function getAppStoreBundleShortVersion() {
   const configuredVersion = process.env.PRESENTON_APP_STORE_VERSION
@@ -104,14 +111,11 @@ function resolveProvisioningProfile({ target, label, candidates }) {
       continue
     }
 
-    try {
-      execFileSync("security", ["cms", "-D", "-i", candidatePath], {
-        stdio: "ignore",
-      })
+    if (canDecodeProvisioningProfile(candidatePath)) {
       return candidate
-    } catch {
-      undecodableProfiles.push(candidate)
     }
+
+    undecodableProfiles.push(candidate)
   }
 
   if (undecodableProfiles.length > 0) {
@@ -125,18 +129,250 @@ function resolveProvisioningProfile({ target, label, candidates }) {
   )
 }
 
-// AfterPack hook: set executable permissions on macOS; no-op on Windows
+function canDecodeProvisioningProfile(profilePath) {
+  if (commandSucceeds("security", ["cms", "-D", "-i", profilePath])) {
+    return true
+  }
+
+  if (
+    commandSucceeds("openssl", [
+      "cms",
+      "-inform",
+      "DER",
+      "-verify",
+      "-noverify",
+      "-in",
+      profilePath,
+      "-out",
+      "/dev/null",
+    ])
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function commandSucceeds(command, args) {
+  try {
+    execFileSync(command, args, { stdio: "ignore" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveMasSigningIdentitiesForTarget() {
+  if (macTarget !== "mas") {
+    return {
+      qualifier: "",
+      appIdentity: "",
+      installerIdentity: "",
+    }
+  }
+
+  try {
+    return resolveMasSigningIdentities()
+  } catch (error) {
+    console.error(`\n${error.message}\n`)
+    process.exit(1)
+  }
+}
+
+function resolveMasSigningIdentities() {
+  const identities = getAppleSigningIdentities()
+  const explicitIdentity =
+    process.env.PRESENTON_MAS_DISTRIBUTION_IDENTITY ||
+    process.env.PRESENTON_MAS_IDENTITY
+
+  const qualifier = explicitIdentity
+    ? validateMasIdentityQualifier(
+      explicitIdentity,
+      "PRESENTON_MAS_DISTRIBUTION_IDENTITY/PRESENTON_MAS_IDENTITY",
+      identities
+    )
+    : process.env.CSC_NAME
+    ? validateMasIdentityQualifier(
+      String(process.env.CSC_NAME),
+      "CSC_NAME",
+      identities
+    )
+    : discoverMasIdentityQualifier(identities)
+
+  const appIdentity = identities.find((identity) =>
+    isMasAppIdentityName(identity.name) && identity.name.includes(qualifier)
+  )
+  const installerIdentity = identities.find((identity) =>
+    isMasInstallerIdentityName(identity.name) && identity.name.includes(qualifier)
+  )
+  if (!appIdentity || !installerIdentity) {
+    throw buildMissingMasIdentityError(qualifier, identities, {
+      appIdentityFound: !!appIdentity,
+      installerIdentityFound: !!installerIdentity,
+    })
+  }
+
+  return {
+    qualifier,
+    appIdentity: appIdentity.name,
+    installerIdentity: installerIdentity.name,
+  }
+}
+
+function validateMasIdentityQualifier(value, source, identities) {
+  const identity = value.trim()
+  if (!identity) {
+    throw new Error(`${source} is set but empty.`)
+  }
+
+  const matchedIdentity = identities.find(
+    (candidate) => candidate.hash === identity || candidate.name === identity
+  )
+  const identityName = matchedIdentity?.name || identity
+  if (isDevelopmentIdentityName(identityName)) {
+    throw new Error(
+      `${source} points to a development identity (${identityName}). MAS distribution builds require Apple Distribution or 3rd Party Mac Developer Application.`
+    )
+  }
+  if (isMasAppIdentityName(identityName) || isMasInstallerIdentityName(identityName)) {
+    return getMasIdentityQualifier(identityName)
+  }
+  if (/^[A-Fa-f0-9]{40}$/.test(identity) && !matchedIdentity) {
+    throw new Error(
+      `${source} is a certificate hash that was not found in the keychain, so the matching MAS installer certificate cannot be discovered. Use the certificate name or team qualifier instead.`
+    )
+  }
+
+  return identity
+}
+
+function discoverMasIdentityQualifier(identities) {
+  const appIdentity = identities.find((identity) => isMasAppIdentityName(identity.name))
+  if (appIdentity) {
+    return getMasIdentityQualifier(appIdentity.name)
+  }
+
+  throw buildMissingMasIdentityError("", identities, {
+    appIdentityFound: false,
+    installerIdentityFound: identities.some((identity) =>
+      isMasInstallerIdentityName(identity.name)
+    ),
+  })
+}
+
+function getAppleSigningIdentities() {
+  const outputs = []
+  for (const args of [
+    ["find-identity", "-v"],
+    ["find-identity", "-v", "-p", "codesigning"],
+  ]) {
+    try {
+      outputs.push(execFileSync("security", args, { encoding: "utf8" }))
+    } catch {
+      continue
+    }
+  }
+
+  const seen = new Set()
+  return outputs
+    .join("\n")
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(/^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"([^"]+)"/)
+      return match ? { hash: match[1], name: match[2] } : undefined
+    })
+    .filter(Boolean)
+    .filter((identity) => {
+      if (seen.has(identity.name)) {
+        return false
+      }
+      seen.add(identity.name)
+      return true
+    })
+}
+
+function isMasAppIdentityName(name) {
+  return /^(Apple Distribution|3rd Party Mac Developer Application):/.test(name)
+}
+
+function isMasInstallerIdentityName(name) {
+  return /^3rd Party Mac Developer Installer:/.test(name)
+}
+
+function isDevelopmentIdentityName(name) {
+  return /^(Apple Development|Mac Developer):/.test(name)
+}
+
+function getMasIdentityQualifier(identityName) {
+  return identityName.replace(
+    /^(Apple Distribution|3rd Party Mac Developer Application|3rd Party Mac Developer Installer):\s*/,
+    ""
+  )
+}
+
+function buildMissingMasIdentityError(qualifier, identities, status) {
+  const availableIdentities = identities.length
+    ? identities.map((identity) => `  - ${identity.name}`).join("\n")
+    : "  (no valid Apple signing identities found)"
+  const expectedQualifier = qualifier ? ` matching "${qualifier}"` : ""
+  return new Error(
+    [
+      "Missing MAS signing identity.",
+      `MAS distribution builds require both an app certificate and an installer certificate${expectedQualifier}:`,
+      "  - Apple Distribution or 3rd Party Mac Developer Application",
+      "  - 3rd Party Mac Developer Installer",
+      "",
+      `App certificate found: ${status.appIdentityFound ? "yes" : "no"}`,
+      `Installer certificate found: ${status.installerIdentityFound ? "yes" : "no"}`,
+      "",
+      "Create/download the missing certificate from Apple Developer Certificates,",
+      "install it in Keychain Access, then rerun the build.",
+      "",
+      "Available Apple signing identities:",
+      availableIdentities,
+    ].join("\n")
+  )
+}
+
+function assertCodesignCanUseIdentity(identity) {
+  if (!identity || macTarget !== "mas" || process.platform !== "darwin") {
+    return
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "presenton-codesign-"))
+  const tempFile = path.join(tempDir, "preflight")
+  try {
+    fs.writeFileSync(tempFile, "Presenton MAS signing preflight\n")
+    execFileSync(
+      "codesign",
+      ["--force", "--sign", identity, "--timestamp=none", tempFile],
+      { stdio: "ignore", timeout: 30000 }
+    )
+  } catch (error) {
+    const timedOut = error && error.signal === "SIGTERM"
+    throw new Error(
+      [
+        "Could not complete MAS signing preflight with the selected distribution identity.",
+        timedOut
+          ? "codesign timed out, usually because macOS is waiting for Keychain/private-key access."
+          : "codesign failed before electron-builder started signing the app.",
+        "Unlock the login keychain and allow codesign access to the Apple Distribution private key, then rerun the build.",
+        `Identity: ${identity}`,
+      ].join("\n")
+    )
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+}
+
+// AfterPack hook: set executable permissions and repair packaged runtime bundles on macOS.
 const afterPack = async (context) => {
   if (context.electronPlatformName === "darwin") {
     const appPath = context.appOutDir
     const appBundleName = `${context.packager.appInfo.productFilename}.app`
-    const resourcesRoot = path.join(
+    const resourcesRoot = resolvePackagedResourcesRoot(
       appPath,
-      appBundleName,
-      "Contents",
-      "Resources",
-      "app",
-      "resources"
+      appBundleName
     )
     const fastapiPath = path.join(resourcesRoot, "fastapi", "fastapi")
     const exportPyDir = path.join(resourcesRoot, "export", "py")
@@ -178,13 +414,25 @@ const afterPack = async (context) => {
     if (fs.existsSync(exportPyDir)) {
       console.log("Export py directory contents:", fs.readdirSync(exportPyDir))
     }
+
+    normalizeBundledMacChromiumForPackaging(resourcesRoot)
   }
+}
+
+function resolvePackagedResourcesRoot(appPath, appBundleName) {
+  const contentsResourcesRoot = path.join(appPath, appBundleName, "Contents", "Resources")
+  const candidates = [
+    path.join(contentsResourcesRoot, "app.asar.unpacked", "resources"),
+    path.join(contentsResourcesRoot, "app", "resources"),
+  ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0]
 }
 
 const config = {
   appId: APP_ID,
   productName: "Presenton",
-  asar: false,
+  asar: true,
+  asarUnpack: ["resources/**", "node_modules/**/*.node"],
   copyright: "Copyright © 2026 Presenton",
   directories: {
     output: "dist",
@@ -203,8 +451,11 @@ const config = {
     category: "public.app-category.productivity",
     hardenedRuntime: false,
     gatekeeperAssess: false,
-    identity: macTarget === "mas-dev" ? null : undefined,
-    icon: "resources/ui/assets/images/presenton_short_filled.png",
+    identity:
+      macTarget === "mas" || macTarget === "mas-dev"
+        ? null
+        : undefined,
+    icon: "build/icon.icns",
     bundleShortVersion: appStoreBundleShortVersion,
     bundleVersion: appStoreBundleVersion,
     extendInfo: {
@@ -222,10 +473,12 @@ const config = {
   },
   mas: {
     type: "distribution",
-    identity: masDistributionIdentity || undefined,
+    identity: masIdentityQualifier || undefined,
     provisioningProfile: masProvisioningProfile,
     entitlements: "build/entitlements.mas.plist",
     entitlementsInherit: "build/entitlements.mas.inherit.plist",
+    // Avoid codesign hanging on Apple's timestamp service during local MAS packaging.
+    additionalArguments: masSigningExtraArgs,
   },
   linux: {
     artifactName: "Presenton-${version}.${ext}",
@@ -265,5 +518,19 @@ const config = {
 }
 
 const targets = macTarget ? builder.Platform.MAC.createTarget([macTarget]) : undefined
+
+if (macTarget === "mas" && process.env.PRESENTON_SKIP_CODESIGN_PREFLIGHT !== "1") {
+  assertCodesignCanUseIdentity(masAppSigningIdentity)
+}
+
+if (macTarget === "mas") {
+  console.log("[MAS] Signing preflight:", {
+    identityQualifier: masIdentityQualifier || "auto",
+    appIdentity: masAppSigningIdentity || "none",
+    installerIdentity: masInstallerSigningIdentity || "none",
+    provisioningProfile: masProvisioningProfile || "none",
+    additionalArguments: masSigningExtraArgs,
+  })
+}
 
 builder.build({ targets, config })

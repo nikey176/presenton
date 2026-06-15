@@ -169,48 +169,86 @@ function macChromiumBundleLooksCodeSignReady(executablePath) {
   return macFrameworkLayoutLooksValid(macChromiumFrameworkPath(appBundlePath));
 }
 
-function normalizeFrameworkSymlinkTargets(frameworkPath) {
+function canonicalizeFrameworkSymlinkTargets(frameworkPath) {
   if (!fs.existsSync(frameworkPath)) {
     return 0;
   }
 
-  const stack = [frameworkPath];
+  const versionsPath = path.join(frameworkPath, "Versions");
+  const currentPath = path.join(versionsPath, "Current");
+  if (!fs.existsSync(versionsPath)) {
+    return 0;
+  }
+
+  let rewritten = 0;
+
+  const versionEntries = fs
+    .readdirSync(versionsPath, { withFileTypes: true })
+    .filter((entry) => entry.name !== "Current" && entry.isDirectory())
+    .map((entry) => entry.name);
+  const currentTarget =
+    isSymlink(currentPath) &&
+    fs.existsSync(path.resolve(versionsPath, fs.readlinkSync(currentPath)))
+      ? fs.readlinkSync(currentPath)
+      : versionEntries[0];
+
+  if (!currentTarget) {
+    return 0;
+  }
+
+  if (!isSymlink(currentPath) || fs.readlinkSync(currentPath) !== currentTarget) {
+    fs.rmSync(currentPath, { recursive: true, force: true });
+    fs.symlinkSync(currentTarget, currentPath);
+    rewritten += 1;
+  }
+
+  const topLevelSymlinks = [
+    "Google Chrome for Testing Framework",
+    "Helpers",
+    "Libraries",
+    "Resources",
+  ];
+  for (const name of topLevelSymlinks) {
+    const linkPath = path.join(frameworkPath, name);
+    const linkTarget = ["Versions", "Current", name].join("/");
+    if (!fs.existsSync(path.resolve(frameworkPath, linkTarget))) {
+      continue;
+    }
+    if (isSymlink(linkPath) && fs.readlinkSync(linkPath) === linkTarget) {
+      continue;
+    }
+
+    fs.rmSync(linkPath, { recursive: true, force: true });
+    fs.symlinkSync(linkTarget, linkPath);
+    rewritten += 1;
+  }
+
+  return rewritten;
+}
+
+function canonicalizeMacFrameworkSymlinks(rootDir) {
+  if (!fs.existsSync(rootDir)) {
+    return 0;
+  }
+
+  const stack = [rootDir];
   let rewritten = 0;
   while (stack.length) {
     const current = stack.pop();
     const entries = fs.readdirSync(current, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
-      const stats = fs.lstatSync(fullPath);
-      if (stats.isDirectory()) {
-        stack.push(fullPath);
+      if (!entry.isDirectory()) {
         continue;
       }
-      if (!stats.isSymbolicLink()) {
+      if (entry.name === "Google Chrome for Testing Framework.framework") {
+        rewritten += canonicalizeFrameworkSymlinkTargets(fullPath);
         continue;
       }
-
-      const linkTarget = fs.readlinkSync(fullPath);
-      if (!/(^|\/)Versions\/Current\//.test(linkTarget)) {
+      if (entry.name.endsWith(".framework")) {
         continue;
       }
-
-      const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
-      if (!fs.existsSync(resolvedTarget)) {
-        continue;
-      }
-
-      const rewrittenTarget = path.relative(
-        path.dirname(fullPath),
-        fs.realpathSync.native ? fs.realpathSync.native(resolvedTarget) : fs.realpathSync(resolvedTarget),
-      );
-      if (!rewrittenTarget || rewrittenTarget === linkTarget) {
-        continue;
-      }
-
-      fs.unlinkSync(fullPath);
-      fs.symlinkSync(rewrittenTarget, fullPath);
-      rewritten += 1;
+      stack.push(fullPath);
     }
   }
 
@@ -224,10 +262,10 @@ function normalizeMacBundleForPackaging(executablePath) {
   }
 
   const frameworkPath = macChromiumFrameworkPath(appBundlePath);
-  const rewritten = normalizeFrameworkSymlinkTargets(frameworkPath);
+  const rewritten = canonicalizeFrameworkSymlinkTargets(frameworkPath);
   if (rewritten > 0) {
     console.log(
-      `[Chromium] Rewrote ${rewritten} framework symlinks to avoid nested Current references.`,
+      `[Chromium] Canonicalized ${rewritten} framework symlinks for App Store packaging.`,
     );
   }
   adHocSignMacBundle(appBundlePath);
@@ -256,31 +294,10 @@ function adHocSignMacBundle(appBundlePath) {
 }
 
 function normalizeBundledMacChromiumForPackaging(rootDir = cacheDir) {
-  if (!fs.existsSync(rootDir)) {
-    return 0;
-  }
-
-  const stack = [rootDir];
-  let rewritten = 0;
-  while (stack.length) {
-    const current = stack.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      if (entry.name === "Google Chrome for Testing Framework.framework") {
-        rewritten += normalizeFrameworkSymlinkTargets(fullPath);
-        continue;
-      }
-      stack.push(fullPath);
-    }
-  }
-
+  const rewritten = canonicalizeMacFrameworkSymlinks(rootDir);
   if (rewritten > 0) {
     console.log(
-      `[Chromium] Rewrote ${rewritten} bundled macOS framework symlinks before packaging.`,
+      `[Chromium] Canonicalized ${rewritten} bundled macOS framework symlinks before packaging.`,
     );
   }
   return rewritten;
@@ -373,6 +390,7 @@ if (require.main === module) {
 
 module.exports = {
   adHocSignMacBundle,
+  canonicalizeMacFrameworkSymlinks,
   normalizeBundledMacChromiumForPackaging,
   normalizeMacBundleForPackaging,
 };
