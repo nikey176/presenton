@@ -17,7 +17,8 @@ import { usePathname } from 'next/navigation';
 import { getLLMConfigValidationError, handleSaveLLMConfig } from '@/utils/storeHelpers';
 import { checkIfSelectedOllamaModelIsPulled, pullOllamaModel } from '@/utils/providerUtils';
 import { getApiUrl } from '@/utils/api';
-import CodexConfig, { CHATGPT_MODELS } from '../CodexConfig';
+import CodexConfig from '../CodexConfig';
+import { CODEX_MODELS } from '@/utils/codexModels';
 import VertexAzureManualFields from '@/components/VertexAzureManualFields';
 import BedrockManualFields from '@/components/BedrockManualFields';
 import OpenAICompatibleImageFields from '@/components/OpenAICompatibleImageFields';
@@ -847,7 +848,7 @@ const PresentonMode = ({
                                         <SelectValue placeholder="Select a model" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {CHATGPT_MODELS.map((model) => (
+                                        {CODEX_MODELS.map((model) => (
                                             <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
                                         ))}
                                     </SelectContent>

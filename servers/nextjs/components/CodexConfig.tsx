@@ -12,6 +12,10 @@ import { getApiUrl } from "@/utils/api";
 import { MixpanelEvent, trackEvent } from "@/utils/mixpanel";
 import { usePathname, useRouter } from "next/navigation";
 import { syncStoreAfterCodexSignOut } from "@/utils/storeHelpers";
+import {
+  DEFAULT_CODEX_MODEL,
+  isSupportedCodexModel,
+} from "@/utils/codexModels";
 
 interface CodexConfigProps {
   codexModel: string;
@@ -29,22 +33,6 @@ interface StatusResponse {
   is_pro?: boolean;
   detail?: string;
 }
-
-interface CodexModel {
-  id: string;
-  name: string;
-}
-
-export const CHATGPT_MODELS: CodexModel[] = [
-  { id: "gpt-5.2", name: "GPT-5.2" },
-  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-  { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
-  { id: "gpt-5.4", name: "GPT-5.4" },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 mini" },
-  { id: "gpt-5.5", name: "GPT-5.5" },
-];
-
-export const DEFAULT_CODEX_MODEL = "gpt-5.2";
 
 export default function CodexConfig({
   codexModel,
@@ -80,6 +68,12 @@ export default function CodexConfig({
     onAuthStatusChange?.(authStatus === "authenticated");
   }, [authStatus, onAuthStatusChange]);
 
+  useEffect(() => {
+    if (codexModel && !isSupportedCodexModel(codexModel)) {
+      onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
+    }
+  }, [codexModel, onInputChange]);
+
   const applyProfile = (data: Partial<StatusResponse>) => {
     setAccountId(data.account_id ?? null);
     setUsername(data.username ?? null);
@@ -97,7 +91,9 @@ export default function CodexConfig({
       const data: StatusResponse = await res.json();
       if (data.status === "authenticated") {
         onInputChange('codex', 'LLM');
-        onInputChange(DEFAULT_CODEX_MODEL, 'codex_model');
+        if (!isSupportedCodexModel(codexModel)) {
+          onInputChange(DEFAULT_CODEX_MODEL, 'codex_model');
+        }
         setAuthStatus("authenticated");
         applyProfile(data);
       } else {
@@ -141,7 +137,7 @@ export default function CodexConfig({
             setAuthStatus("authenticated");
             applyProfile(pollData);
             setSessionId(null);
-            if (!codexModel) {
+            if (!isSupportedCodexModel(codexModel)) {
               onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
             }
             notify.success(
@@ -193,7 +189,7 @@ export default function CodexConfig({
       applyProfile(data);
       setSessionId(null);
       setManualCode("");
-      if (!codexModel) {
+      if (!isSupportedCodexModel(codexModel)) {
         onInputChange(DEFAULT_CODEX_MODEL, "codex_model");
       }
       notify.success(

@@ -1,6 +1,7 @@
 import { setLLMConfig } from "@/store/slices/userConfig";
 import { store } from "@/store/store";
 import { LLMConfig } from "@/types/llm_config";
+import { isSupportedCodexModel } from "@/utils/codexModels";
 
 function isProvided(value: unknown): boolean {
   return value !== "" && value !== null && value !== undefined;
@@ -181,6 +182,9 @@ export const getLLMConfigValidationError = (
   } else if (llm === "codex" || llm === "chatgpt") {
     if (!isProvided(llmConfig.CODEX_MODEL)) {
       return "Select a Codex model.";
+    }
+    if (!isSupportedCodexModel(llmConfig.CODEX_MODEL)) {
+      return "Select a supported Codex model.";
     }
   } else {
     return "Unsupported or unknown text provider.";
