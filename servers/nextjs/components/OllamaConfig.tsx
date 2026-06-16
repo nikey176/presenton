@@ -295,7 +295,7 @@ export default function OllamaConfig({
   const modelParameterBadge = (model: CombinedModel) =>
     normalizeParameters(model.parameters);
   const modelSizeBadge = (model: CombinedModel) => compactSize(model.size);
-  const modelSupportBadge = (model: CombinedModel) =>
+  const modelSupportTitle = (model: CombinedModel) =>
     model.tested === false ? "Experimental" : "Recommended";
   const modelSupportBadgeClass = (model: CombinedModel) =>
     model.tested === false
@@ -331,12 +331,14 @@ export default function OllamaConfig({
   const renderModelBadges = (model: CombinedModel) => (
     <div className="mt-1 flex items-center gap-1.5">
       <span
+        title={modelSupportTitle(model)}
+        aria-label={modelSupportTitle(model)}
         className={cn(
-          "rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
           modelSupportBadgeClass(model)
         )}
       >
-        {modelSupportBadge(model)}
+        <Check className="h-3 w-3" aria-hidden="true" />
       </span>
       {hasKnownParameters(model) && (
         <span className="rounded-full border border-[#E7E8EC] bg-[#F7F8FA] px-1.5 py-0.5 text-[10px] font-medium text-[#5F6062]">

@@ -818,16 +818,27 @@ const TextProvider = ({ onInputChange, llmConfig }: OpenAIConfigProps) => {
                                       ) : null}
                                       {selectedProvider === "ollama" ? (
                                         <span
-                                          className={cn(
-                                            "text-xs px-2 py-1 rounded-full",
+                                          title={
                                             model.tested === false
-                                              ? "text-amber-700 bg-amber-50"
-                                              : "text-green-700 bg-green-50"
+                                              ? "Experimental"
+                                              : "Recommended"
+                                          }
+                                          aria-label={
+                                            model.tested === false
+                                              ? "Experimental"
+                                              : "Recommended"
+                                          }
+                                          className={cn(
+                                            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                                            model.tested === false
+                                              ? "border-amber-200 bg-amber-50 text-amber-700"
+                                              : "border-green-200 bg-green-50 text-green-700"
                                           )}
                                         >
-                                          {model.tested === false
-                                            ? "Experimental"
-                                            : "Recommended"}
+                                          <Check
+                                            className="h-3 w-3"
+                                            aria-hidden="true"
+                                          />
                                         </span>
                                       ) : null}
                                     </div>
