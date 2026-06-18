@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "@/store/store";
 import "@/app/(presentation-generator)/utils/prism-languages";
 import { Skeleton } from "@/components/ui/skeleton";
-import { notify } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { usePathname } from "next/navigation";
 import { trackEvent, MixpanelEvent } from "@/utils/mixpanel";
@@ -88,6 +88,20 @@ const PDF_PRINT_STYLE = `
   }
 `;
 
+// External CSS/font URLs (e.g. Google Fonts) block Puppeteer's networkidle0 on
+// offline servers because the DNS lookup hangs indefinitely. After
+// normalizeBackendAssetUrls, any remaining http(s) URL is truly external and
+// must be skipped for the export renderer to be offline-safe.
+function isExternalUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+function filterOfflineSafeFonts(fonts: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(fonts).filter(([, url]) => !isExternalUrl(url))
+  );
+}
+
 type PresentationPageProps = {
   presentation_id: string;
   exportCookie?: string;
@@ -111,6 +125,11 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    // Export renderer must remain offline-safe: avoid external CDN fetches
+    // (e.g. tailwindcss.com), otherwise puppeteer `networkidle0` can time out.
+    if (pathname === "/pdf-maker") {
+      return;
+    }
     if (presentationData?.slides?.[0]?.layout?.includes("custom")) {
       const existingScript = document.querySelector(
         'script[src*="tailwindcss.com"]'
@@ -136,7 +155,7 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
       dispatch(setPresentationData(normalizedData));
 
       if (normalizedData.fonts) {
-        useFontLoader(normalizedData.fonts);
+        useFontLoader(filterOfflineSafeFonts(normalizedData.fonts));
       }
       if (normalizedData?.theme) {
         try {
@@ -148,7 +167,7 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
       }
     } catch (error) {
       setError(true);
-      notify.error("Failed to load presentation", "The presentation could not be loaded. Please try again.");
+      toast.error("Failed to load presentation");
       console.error("Error fetching user slides:", error);
     } finally {
       setContentLoading(false);
@@ -204,7 +223,9 @@ const PresentationPage = ({ presentation_id, exportCookie }: PresentationPagePro
     });
     const textFontName = theme.data.fonts.textFont.name;
     const textFontUrl = theme.data.fonts.textFont.url;
-    useFontLoader({ [textFontName]: textFontUrl });
+    if (!isExternalUrl(textFontUrl)) {
+      useFontLoader({ [textFontName]: textFontUrl });
+    }
     element.style.setProperty("font-family", `"${textFontName}"`);
     element.style.setProperty("--heading-font-family", `"${textFontName}"`);
     element.style.setProperty("--body-font-family", `"${textFontName}"`);

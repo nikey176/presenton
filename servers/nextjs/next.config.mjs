@@ -4,12 +4,34 @@ const nextConfig = {
   output: "standalone",
   ...(process.env.NODE_ENV !== "production"
     ? {
-        allowedDevOrigins: [
-          "http://127.0.0.1:40001",
-          "http://localhost:40001",
-          "127.0.0.1",
-          "localhost",
-        ],
+        // Allow opening the dev server from another host on the LAN.
+        // Additional hosts can be passed via ALLOWED_DEV_ORIGINS (comma-separated).
+        // Example: ALLOWED_DEV_ORIGINS="192.168.1.15,http://192.168.1.15:5000"
+        ...(process.env.ALLOWED_DEV_ORIGINS
+          ? {
+              allowedDevOrigins: [
+                "http://127.0.0.1:40001",
+                "http://localhost:40001",
+                "127.0.0.1",
+                "localhost",
+                "192.168.1.15",
+                "http://192.168.1.15:5000",
+                ...process.env.ALLOWED_DEV_ORIGINS
+                  .split(",")
+                  .map((x) => x.trim())
+                  .filter(Boolean),
+              ],
+            }
+          : {
+              allowedDevOrigins: [
+                "http://127.0.0.1:40001",
+                "http://localhost:40001",
+                "127.0.0.1",
+                "localhost",
+                "192.168.1.15",
+                "http://192.168.1.15:5000",
+              ],
+            }),
       }
     : {}),
 

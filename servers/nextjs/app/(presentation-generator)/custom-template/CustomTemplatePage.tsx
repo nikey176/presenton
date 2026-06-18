@@ -23,7 +23,12 @@ import { SaveLayoutModal } from "./components/SaveLayoutModal";
 import { FileUploadSection } from "./components/FileUploadSection";
 
 import { useFontLoader } from "../hooks/useFontLoad";
+import { normalizeBackendAssetUrls } from "@/utils/api";
 import Header from "@/app/(presentation-generator)/(dashboard)/dashboard/components/Header";
+
+
+
+
 
 const CustomTemplatePage = () => {
     const router = useRouter();
@@ -68,6 +73,7 @@ const CustomTemplatePage = () => {
         }
     }, []);
 
+
     /**
      * Step 1: Check fonts in uploaded PPTX
      */
@@ -86,7 +92,7 @@ const CustomTemplatePage = () => {
         if (selectedFile) {
             const data = await fontUploadAndPreview(selectedFile);
             if (data) {
-                useFontLoader(data.fonts);
+                useFontLoader(normalizeBackendAssetUrls(data.fonts));
             }
         }
     }, [selectedFile, fontUploadAndPreview]);
@@ -180,26 +186,25 @@ const CustomTemplatePage = () => {
 
 
     return (
-        <div className="relative min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
 
-            <div>
-                <Header />
-                <TemplateStudioHeader />
-                {showFileUpload ? (
-                    <div className="pb-24">
-                        <FileUploadSection
-                            selectedFile={selectedFile}
-                            handleFileSelect={handleFileSelect}
-                            removeFile={removeFile}
-                            CheckFonts={handleCheckFonts}
-                            isProcessingPptx={state.isLoading}
-                            slides={[]}
-                            completedSlides={0}
-                        />
+            <Header />
+            <TemplateStudioHeader />
+            {showFileUpload ? (
+                <div className="pb-24">
+                    <FileUploadSection
+                        selectedFile={selectedFile}
+                        handleFileSelect={handleFileSelect}
+                        removeFile={removeFile}
+                        CheckFonts={handleCheckFonts}
+                        isProcessingPptx={state.isLoading}
+                        slides={[]}
+                        completedSlides={0}
+                    />
 
-                    </div>
-                ) : (
-                    <div className="mx-auto min-h-[600px] px-6 pb-24">
+                </div>
+            ) : (
+                <div className="mx-auto min-h-[600px] px-6 pb-24">
 
                     <TemplateCreationProgress
                         currentStep={state.step}
@@ -262,9 +267,9 @@ const CustomTemplatePage = () => {
                         isSaving={isSavingLayout}
                         template_info_id={state.templateId || ''}
                     />
-                    </div>
-                )}
-            </div>
+                </div>
+            )}
+
         </div>
     );
 };

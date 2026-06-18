@@ -390,6 +390,9 @@ const ImageProvider = ({ llmConfig, setLlmConfig }: { llmConfig: LLMConfig, setL
                                             );
                                         }}
                                     />
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Rename your positive prompt node to <span className="font-medium">Input Prompt</span> in ComfyUI before exporting.
+                                    </p>
                                 </div>
 
                             </div>}

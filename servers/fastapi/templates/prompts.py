@@ -66,7 +66,7 @@ Provide reusable TSX code which can be used as template to generate new slides w
 - layoutDescription example: A slide with a title, description, and an image on right.
 
 # Zod Schema Rules:
-- "describe" must be added for every fields.
+- Use `.describe("...")` (NOT `.description(...)`) for every field in the schema.
 - Add `.default(...)` to every top-level field directly inside the initial `z.object({ ... })` shape.
 - Must not put a single `default` on the whole object like `const Schema = z.object({ ... }).default({ ... })`.
 - Top level fields are those not nested inside other fields.
@@ -78,6 +78,8 @@ Provide reusable TSX code which can be used as template to generate new slides w
 - "categories" must be an array of strings.
 - "series" must be an array of objects with {"name": string, "data": array of numbers}.
 - Must not use z.record() anywhere in the schema.
+- Must declare Schema as: `const Schema = z.object({ ... });` — never add a TypeScript type annotation like `const Schema: z.ZodType<...>`.
+- When nesting `z.object` inside `z.array`, use: `z.array(z.object({ ... }))` with exactly one closing paren per opening call.
 
 # String and Array Field Rules:
 - Every string field must include `.max(...)`; every array field must include `.max(...)`.
@@ -86,8 +88,21 @@ Provide reusable TSX code which can be used as template to generate new slides w
 - Choose a `max` that keeps the longest allowed content from overflowing its container.
 
 # Table Rules:
-- Construct "tr -> th" by iterating over the "columns" field.
-- Construct "tr -> td" by iterating over the "rows" field.
+- ONLY use native HTML table elements: <table>, <thead>, <tbody>, <tr>, <th>, <td>. Never use shadcn/ui components like TableBody, TableHead, TableRow, TableCell, etc.
+- <thead> and <tbody> must be SIBLINGS, never nested inside each other.
+- Construct table like this exact pattern:
+  ```
+  <table>
+    <thead>
+      <tr>{table?.columns?.map((col, i) => <th key={i}>{col}</th>)}</tr>
+    </thead>
+    <tbody>
+      {table?.rows?.map((row, i) => (
+        <tr key={i}>{row?.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
+      ))}
+    </tbody>
+  </table>
+  ```
 - Make sure table height and width adjusts to fit the content.
 
 # Grahps, Charts, etc Rules:
@@ -114,12 +129,13 @@ Provide reusable TSX code which can be used as template to generate new slides w
 - Make sure camelCase is used for all styles. For e.g. "letter-spacing" should be "letterSpacing".
 - Schema.parse must not be used in the code.
 - Use 'const {field1, field2, ...} = data;' to access the data.
-- field1 or field2 or ... can be undefined, so use optional chaining to access them.
+- Every field from data can be undefined. Always use optional chaining: `field?.map(...)` NOT `field.map(...)`; `field?.length` NOT `field.length`; `item?.property` NOT `item.property`.
 - Don't use "min-height" on cards and instead make its height grow/shrink to fit the content.
 - Make sure cards/items are centered vertically and horizontally in the available space.
 - Make sure no element is scrollable.
 - Don't add any animations, transitions, or effects.
 - Make sure no content elements are overflowing the slide boundaries.
+- Never use React types that do not exist such as React.JSXElementChildren. Use React.ReactNode for JSX children.
 
 # Import and Export Rules:
 - All import statements must be defined at the top.
@@ -127,7 +143,6 @@ Provide reusable TSX code which can be used as template to generate new slides w
 - There must be only one 'export' statement in the whole TSX code.
 
 # Output Code Rules:
-- Every object field must use `key: value` syntax and include a trailing comma. Never use object shorthand such as `{ icon_url }`.
 - Code should be in following order:
   - Zod Schema (Schema)
   - Layout ID, Name and Description (layoutId, layoutName, layoutDescription)

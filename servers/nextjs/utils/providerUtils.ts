@@ -183,6 +183,16 @@ function getOllamaApiUrl(
   return getApiUrl(query ? `${path}?${query}` : path);
 }
 
+export const checkIfSelectedOllamaModelIsPulled = async (
+  model: string
+): Promise<boolean> => {
+  try {
+    return await isOllamaModelAvailable(model);
+  } catch {
+    return false;
+  }
+};
+
 export const isOllamaModelAvailable = async (
   ollamaModel: string,
   ollamaUrl?: string

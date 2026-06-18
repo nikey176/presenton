@@ -80,6 +80,19 @@ export type BundledPresentationExportResult = { path: string };
 
 const EXPORT_DIRECTORY_MODE = 0o755;
 const EXPORT_FILE_MODE = 0o644;
+const EXPORT_RETRY_DELAY_MS = 1500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableBundledExportError(message: string): boolean {
+  return (
+    message.includes("Navigation timeout") ||
+    message.includes("Chrome was not found") ||
+    message.includes("Failed to launch browser")
+  );
+}
 
 function normalizeExportOutputPath(params: {
   pathValue?: string;
@@ -148,7 +161,35 @@ export async function runBundledPresentationExport(params: {
   format: BundledPresentationExportFormat;
   cookieHeader?: string;
 }): Promise<BundledPresentationExportResult> {
-  return runBundledPresentationExportLocked(params);
+  const maxAttempts = params.format === "pptx" ? 3 : 1;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        console.warn("[bundled-export] retry", {
+          presentationId: params.presentationId,
+          format: params.format,
+          attempt,
+          maxAttempts,
+        });
+      }
+      return await runBundledPresentationExportLocked(params);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const shouldRetry =
+        attempt < maxAttempts && isRetryableBundledExportError(message);
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      await delay(EXPORT_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function runBundledPresentationExportLocked(params: {

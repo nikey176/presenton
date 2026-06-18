@@ -50,61 +50,26 @@ const RESERVED_FOR_LUCIDE = new Set([
     "LabelList",
     "Label",
     "Text",
+    // Shadcn/ui table aliases — lucide-react exports Table (icon) which would clash
+    // with the "const Table = 'table'" shadcn alias injected below.
+    "Table",
 ]);
 
-function isLucideComponent(value: unknown): boolean {
-    return typeof value === "function" || (typeof value === "object" && value !== null);
-}
+let lucideBindingLinesCache: string | null = null;
 
-function getLucideBindingLines(layoutCode: string): string {
-    const requestedBindings = new Map<string, string>();
-    const declaredComponents = new Set<string>();
-    const bindings: string[] = [];
-
-    for (const match of layoutCode.matchAll(
-        /\b(?:const|let|var|function|class)\s+([A-Z][A-Za-z0-9_$]*)\b/g
-    )) {
-        declaredComponents.add(match[1]);
+function getLucideBindingLines(): string {
+    if (lucideBindingLinesCache !== null) {
+        return lucideBindingLinesCache;
     }
-
-    const importPattern = /import\s+\{([\s\S]*?)\}\s+from\s+['"]lucide-react['"];?/g;
-
-    for (const match of layoutCode.matchAll(importPattern)) {
-        const specifiers = match[1].split(",");
-        for (const specifier of specifiers) {
-            const [importedName, localName = importedName] = specifier
-                .trim()
-                .split(/\s+as\s+/);
-
-            if (!importedName || !/^[A-Z][A-Za-z0-9_$]*$/.test(localName)) continue;
-            requestedBindings.set(localName, importedName);
-        }
+    const lines: string[] = [];
+    for (const name of Object.keys(LucideReact)) {
+        if (!/^[A-Z]/.test(name)) continue;
+        if (RESERVED_FOR_LUCIDE.has(name)) continue;
+        if (name === "Icon" || name === "LucideIcon") continue;
+        lines.push(`const ${name} = _Lucide[${JSON.stringify(name)}];`);
     }
-
-    // Generated layouts sometimes omit Lucide imports entirely. Any undefined
-    // capitalized JSX component gets a Lucide component or a visible placeholder.
-    for (const match of layoutCode.matchAll(/<\s*([A-Z][A-Za-z0-9_$]*)(?![A-Za-z0-9_$.])/g)) {
-        const componentName = match[1];
-        if (!requestedBindings.has(componentName)) {
-            requestedBindings.set(componentName, componentName);
-        }
-    }
-
-    for (const [localName, importedName] of requestedBindings) {
-        if (RESERVED_FOR_LUCIDE.has(localName)) continue;
-        if (localName === "Icon" || localName === "LucideIcon") continue;
-        if (declaredComponents.has(localName)) continue;
-
-        const resolvedName = isLucideComponent(
-            (LucideReact as Record<string, unknown>)[importedName]
-        )
-            ? importedName
-            : "CircleHelp";
-
-        bindings.push(`const ${localName} = _Lucide[${JSON.stringify(resolvedName)}];`);
-    }
-
-    return bindings.join("\n");
+    lucideBindingLinesCache = lines.join("\n");
+    return lucideBindingLinesCache;
 }
 
 export interface CompiledLayout {
@@ -156,6 +121,31 @@ function normalizeHardcodedBackendUrlsInCode(layoutCode: string): string {
     );
 }
 
+function buildSampleFromSchemaJSON(schema: Record<string, any>): Record<string, any> {
+    function buildValue(node: Record<string, any>): unknown {
+        if (!node || typeof node !== "object") return undefined;
+        if (node.default !== undefined) return node.default;
+        switch (node.type) {
+            case "array": return [];
+            case "object": {
+                const props = node.properties ?? {};
+                return Object.fromEntries(
+                    Object.entries(props).map(([k, v]) => [k, buildValue(v as Record<string, any>)])
+                );
+            }
+            case "string": return "";
+            case "number":
+            case "integer": return 0;
+            case "boolean": return false;
+            default: return undefined;
+        }
+    }
+    const result = buildValue(schema);
+    return (result && typeof result === "object" && !Array.isArray(result))
+        ? result as Record<string, any>
+        : {};
+}
+
 /**
  * Compiles a layout code string into a usable React component
  */
@@ -182,8 +172,28 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
             .replace(/import\s+[\w$]+\s+from\s+['"]lucide-react['"];?\s*/g, "")
             // Remove other common imports we'll provide
             .replace(/import\s+.*\s+from\s+['"]@\/[^'"]+['"];?/g, "")
-            // Remove export default at the end (we'll handle it differently)
-            .replace(/export\s+default\s+\w+;?\s*$/g, "");
+            // Convert "export const/function/class X" → declaration only (keeps the variable)
+            .replace(/\bexport\s+((?:const|let|var|function|class)\s)/g, "$1")
+            // Remove grouped exports: export { ... }
+            .replace(/export\s*\{[^}]*\}\s*;?/g, "")
+            // Remove export default
+            .replace(/export\s+default\s+\w+;?\s*$/g, "")
+            // Fix: LLM writes ".description(...)" but bundled Zod only has ".describe(...)"
+            .replace(/\.description\(/g, ".describe(")
+            // Fix: LLM uses Icon-prefixed Lucide names (IconCheck → Check, IconStar → Star)
+            .replace(/\bIcon([A-Z][a-zA-Z0-9]*)\b/g, "$1")
+            // Fix: LLM writes "z.object({...})).default({...})" with extra paren
+            // Handles empty and non-empty object defaults; leaves array defaults alone.
+            .replace(/\}\)\)\.default\(\{/g, "}).default({")
+            // Fix: LLM annotates Schema with TypeScript generic containing runtime calls
+            // e.g. "const Schema: z.ZodType<{ title: z.string().max(30) }>" – invalid in Babel
+            .replace(/const\s+Schema\s*:[\s\S]*?(?=\s*=\s*z\.)/g, "const Schema")
+            // Fix: LLM wraps schema in template literal: "const Schema = `\nconst Schema = z.object..."
+            // Remove the entire "const Schema = `\n" line; the real declaration follows on the next line.
+            .replace(/const\s+Schema\s*=\s*`\s*\n?/g, "")
+            // Remove leftover trailing backtick (closing end of that template literal)
+            // Handles both "\n`;" and "};`" end patterns.
+            .replace(/`\s*;?\s*$/g, "");
 
 
 
@@ -196,7 +206,15 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
         }).code;
 
         // Create a factory function that executes the compiled code
-        const lucideBindings = getLucideBindingLines(normalizedLayoutCode);
+        const lucideBindings = getLucideBindingLines();
+
+        // Only inject Table alias if the compiled code doesn't already declare it —
+        // avoids "Identifier 'Table' has already been declared" for layouts that use
+        // Table as a Zod schema variable name.
+        const compiledDeclares = (name: string) =>
+            new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=`).test(compiled ?? "");
+
+        const tableAlias = compiledDeclares("Table") ? "" : "const Table = 'table';";
 
         const factory = new Function(
             "React",
@@ -211,7 +229,7 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
             const d3 = _d3;
             // Expose React hooks
             const { useState, useEffect, useRef, useMemo, useCallback, Fragment } = React;
-            
+
             // Expose Recharts components
             const {
                 ResponsiveContainer, LineChart, Line, BarChart, Bar,
@@ -226,6 +244,18 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
 
             // Lucide icons used in generated templates (<Star />, etc.) — skip names that clash with Recharts
             ${lucideBindings}
+
+            // Shadcn/ui Table component aliases → native HTML elements.
+            // LLM sometimes imports these from "@/components/ui/table" which isn't in the sandbox.
+            // Table is skipped if the layout code already declares it (avoids redeclaration error).
+            ${tableAlias}
+            const TableBody = 'tbody';
+            const TableHeader = 'thead';
+            const TableHead = 'th';
+            const TableFooter = 'tfoot';
+            const TableRow = 'tr';
+            const TableCell = 'td';
+            const TableCaption = 'caption';
 
             // Execute the compiled code
             ${compiled}
@@ -260,14 +290,17 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
 
         // Parse schema to get sample data
         let sampleData: Record<string, any> = {};
+        const schemaJSON = z.toJSONSchema(result.Schema);
         if (result.Schema) {
             try {
                 sampleData = normalizeLayoutAssetUrls(result.Schema.parse({}));
-            } catch (e) {
-                console.warn("Could not parse schema defaults:", e);
+            } catch {
+                // Schema.parse({}) fails when required fields have no defaults.
+                // Fall back to generating empty-but-typed defaults from schemaJSON
+                // so array fields get [] instead of undefined/{}.
+                sampleData = buildSampleFromSchemaJSON(schemaJSON as Record<string, any>);
             }
         }
-        const schemaJSON = z.toJSONSchema(result.Schema);
 
         return {
             component: wrappedComponent,
@@ -283,5 +316,6 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
         return null;
     }
 }
+
 
 

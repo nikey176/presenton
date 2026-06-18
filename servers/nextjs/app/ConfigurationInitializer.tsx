@@ -5,10 +5,9 @@ import { setCanChangeKeys, setLLMConfig } from '@/store/slices/userConfig';
 import { hasValidLLMConfig, normalizeLLMConfig } from '@/utils/storeHelpers';
 import { usePathname, useRouter } from 'next/navigation';
 import { useDispatch } from 'react-redux';
-import { isOllamaModelAvailable } from '@/utils/providerUtils';
+import { checkIfSelectedOllamaModelIsPulled } from '@/utils/providerUtils';
 import { LLMConfig } from '@/types/llm_config';
 import { getApiUrl } from '@/utils/api';
-import { notify } from '@/components/ui/sonner';
 
 export function ConfigurationInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useDispatch();
@@ -25,11 +24,6 @@ export function ConfigurationInitializer({ children }: { children: React.ReactNo
   }, []);
 
   const setLoadingToFalseAfterNavigatingTo = (pathname: string) => {
-    if (window.location.pathname === pathname) {
-      setIsLoading(false);
-      return;
-    }
-
     const interval = setInterval(() => {
       if (window.location.pathname === pathname) {
         clearInterval(interval);
@@ -80,7 +74,6 @@ export function ConfigurationInitializer({ children }: { children: React.ReactNo
       llmConfig = normalizeLLMConfig(llmConfig);
 
       dispatch(setLLMConfig(llmConfig));
-
       const isValid = hasValidLLMConfig(llmConfig);
       if (route.startsWith('/pdf-maker')) {
         setIsLoading(false);
@@ -89,19 +82,8 @@ export function ConfigurationInitializer({ children }: { children: React.ReactNo
       if (isValid) {
         // Check if the selected Ollama model is pulled
         if (llmConfig.LLM === 'ollama' && llmConfig.OLLAMA_MODEL) {
-          let isAvailable = false;
-          try {
-            isAvailable = await isOllamaModelAvailable(
-              llmConfig.OLLAMA_MODEL,
-              llmConfig.OLLAMA_URL
-            );
-          } catch (error) {
-            notify.error(
-              "Could not connect to Ollama",
-              error instanceof Error ? error.message : "Check the Ollama URL and try again."
-            );
-          }
-          if (!isAvailable) {
+          const isPulled = await checkIfSelectedOllamaModelIsPulled(llmConfig.OLLAMA_MODEL);
+          if (!isPulled) {
             router.push('/');
             setLoadingToFalseAfterNavigatingTo('/');
             return;
@@ -109,14 +91,6 @@ export function ConfigurationInitializer({ children }: { children: React.ReactNo
         }
         if (llmConfig.LLM === 'custom') {
           const isAvailable = await checkIfSelectedCustomModelIsAvailable(llmConfig);
-          if (!isAvailable) {
-            router.push('/');
-            setLoadingToFalseAfterNavigatingTo('/');
-            return;
-          }
-        }
-        if (llmConfig.LLM === 'deepseek') {
-          const isAvailable = await checkIfSelectedDeepSeekModelIsAvailable(llmConfig);
           if (!isAvailable) {
             router.push('/');
             setLoadingToFalseAfterNavigatingTo('/');
@@ -166,40 +140,20 @@ export function ConfigurationInitializer({ children }: { children: React.ReactNo
     }
   }
 
-  const checkIfSelectedDeepSeekModelIsAvailable = async (llmConfig: LLMConfig) => {
-    try {
-      const response = await fetch(getApiUrl('/api/v1/ppt/openai/models/available'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: llmConfig.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
-          api_key: llmConfig.DEEPSEEK_API_KEY,
-        }),
-      });
-      const data = await response.json();
-      return data.includes(llmConfig.DEEPSEEK_MODEL);
-    } catch (error) {
-      console.error('Error fetching DeepSeek models:', error);
-      return false;
-    }
-  }
-
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white p-4">
-        <div className="w-full max-w-md">
-          <div className="rounded-2xl border border-[#EDEEEF] bg-white p-8 text-center shadow-xl">
+      <div className="min-h-screen bg-gradient-to-br from-[#E9E8F8] via-[#F5F4FF] to-[#E0DFF7] flex items-center justify-center p-4">
+        <div className="max-w-md w-full">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-8 text-center">
             {/* Logo/Branding */}
             <div className="mb-6">
               <img
                 src="/Logo.png"
                 alt="PresentOn"
-                className="mx-auto mb-4 h-12 opacity-90"
+                className="h-12 mx-auto mb-4 opacity-90"
               />
-              <div className="mx-auto h-1 w-16 rounded-full bg-[#7C51F8]" />
+              <div className="w-16 h-1 bg-gradient-to-r from-blue-500 to-purple-600 mx-auto rounded-full"></div>
             </div>
 
             {/* Loading Text */}

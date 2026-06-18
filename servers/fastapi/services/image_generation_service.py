@@ -415,8 +415,9 @@ class ImageGenerationService:
         - COMFYUI_URL: ComfyUI server URL (e.g., http://192.168.1.7:8188)
         - COMFYUI_WORKFLOW: Workflow JSON exported from ComfyUI
 
-        The workflow should have a CLIPTextEncode node with "Positive" in the title
-        where the prompt will be injected.
+        The workflow must have a node with title "Input Prompt" (case-insensitive)
+        where the prompt will be injected. Rename the desired CLIP text node in ComfyUI
+        to "Input Prompt" before exporting via "Export (API)".
 
         Args:
             prompt: The text prompt for image generation
@@ -436,7 +437,9 @@ class ImageGenerationService:
                 "COMFYUI_WORKFLOW environment variable is not set. Please provide a ComfyUI workflow JSON."
             )
 
-        # Ensure URL doesn't have trailing slash
+        # Ensure URL has a scheme and no trailing slash
+        if comfyui_url and not comfyui_url.startswith(("http://", "https://")):
+            comfyui_url = "http://" + comfyui_url
         comfyui_url = comfyui_url.rstrip("/")
 
         # Parse the workflow JSON
@@ -823,6 +826,11 @@ class ImageGenerationService:
                         return image_path
                     else:
                         raise Exception(f"Failed to download image: {response.status}")
+
+        raise Exception(
+            "No image outputs found in ComfyUI response. "
+            "Make sure your workflow has a SaveImage or PreviewImage node."
+        )
 
     async def generate_image_openai_compatible(
         self, prompt: str, output_directory: str

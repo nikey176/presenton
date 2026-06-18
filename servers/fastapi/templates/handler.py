@@ -163,59 +163,31 @@ def _strip_code_fences(value: str) -> str:
     )
 
 
-_ASSET_FIELD_REPLACEMENTS = {
-    "image_url": "__image_url__",
-    "icon_url": "__icon_url__",
-    "image_prompt": "__image_prompt__",
-    "icon_query": "__icon_query__",
-}
-
-_ASSET_FIELD_DEFAULTS = {
-    "__image_url__": "/static/images/replaceable_template_image.png",
-    "__icon_url__": "/static/icons/placeholder.svg",
-    "__image_prompt__": "replaceable image",
-    "__icon_query__": "placeholder icon",
-}
-
-
-def _normalize_asset_fields(code: str) -> str:
-    normalized = code
-    for field_name, normalized_name in _ASSET_FIELD_REPLACEMENTS.items():
-        normalized = re.sub(
-            rf"(?<!_)\b{re.escape(field_name)}\b(?!_)",
-            normalized_name,
-            normalized,
-        )
-
-    # Models occasionally emit a bare object shorthand without a comma/value:
-    #   icon: {
-    #     __icon_url__
-    #     __icon_query__: "play"
-    #   }
-    # These asset fields are not in scope as variables, so make them valid defaults.
-    def replace_bare_asset_field(match: re.Match[str]) -> str:
-        indentation, field_name = match.groups()
-        default_value = _ASSET_FIELD_DEFAULTS[field_name]
-        return f'{indentation}{field_name}: "{default_value}",'
-
-    return re.sub(
-        r"(?m)^(\s*)(__(?:image_url|icon_url|image_prompt|icon_query)__)\s*,?\s*$",
-        replace_bare_asset_field,
-        normalized,
-    )
-
-
 def _normalize_layout_code_for_create(code: str) -> str:
-    normalized = _normalize_asset_fields(_strip_code_fences(code))
+    normalized = _strip_code_fences(code)
+    normalized = (
+        normalized.replace("image_url", "__image_url__")
+        .replace("icon_url", "__icon_url__")
+        .replace("image_prompt", "__image_prompt__")
+        .replace("icon_query", "__icon_query__")
+    )
 
     first_import_match = re.search(r"(?m)^\s*import\b", normalized)
     if first_import_match:
         normalized = normalized[first_import_match.start() :]
 
-    first_export_match = re.search(r"(?m)^\s*export\b", normalized)
-    if first_export_match:
-        normalized = normalized[: first_export_match.start()]
+    # Convert "export const/function/class X" → "const/function/class X" so the
+    # declaration is preserved even when the LLM emits inline exports.
+    normalized = re.sub(
+        r"(?m)^\s*export\s+((?:const|let|var|function|class)\b)",
+        r"\1",
+        normalized,
+    )
+    # Remove grouped export statements: export { ... } and export default X
+    normalized = re.sub(r"(?ms)^\s*export\s*\{[^}]*\}\s*;?[ \t]*(\r?\n|$)", "", normalized)
+    normalized = re.sub(r"(?m)^\s*export\s+default\b[^\n]*(\r?\n|$)", "", normalized)
 
+    # Strip any remaining import/export lines
     normalized = re.sub(
         r"(?ms)^\s*(?:import|export)\b.*?;(?:\r?\n|$)",
         "",
@@ -227,6 +199,52 @@ def _normalize_layout_code_for_create(code: str) -> str:
         normalized,
     )
     normalized = normalized.strip()
+
+    # Fix: LLM uses shadcn/ui Table components that are not available in the sandbox.
+    # Replace JSX component names with native HTML elements (order matters: longer first).
+    normalized = (
+        normalized
+        .replace("TableHeader", "thead")  # shadcn TableHeader wraps <thead>
+        .replace("TableBody", "tbody")
+        .replace("TableFooter", "tfoot")
+        .replace("TableRow", "tr")
+        .replace("TableHead", "th")       # shadcn TableHead = individual <th> cell
+        .replace("TableCell", "td")
+        .replace("TableCaption", "caption")
+    )
+    # Replace standalone `Table` (word-boundary) → `table` so it doesn't clash with
+    # the `const Table = 'table'` pre-declaration injected by the JS compile sandbox.
+    # Must run after the longer Table* names have already been replaced above.
+    normalized = re.sub(r"\bTable\b", "table", normalized)
+
+    # Fix: LLM writes ".description(...)" but bundled Zod only has ".describe(...)"
+    normalized = normalized.replace(".description(", ".describe(")
+
+    # Fix: LLM uses Icon-prefixed Lucide names (e.g. IconCheck, IconStar) but Lucide React
+    # exports them without the prefix (Check, Star). Strip the Icon prefix everywhere.
+    normalized = re.sub(r'\bIcon([A-Z][a-zA-Z0-9]*)\b', r'\1', normalized)
+
+    # Fix: LLM wraps z.object with extra close-paren before .default({...})
+    # Handles both empty and non-empty object defaults, e.g.:
+    #   "z.object({...})).default({})"  → "z.object({...}).default({})"
+    #   "z.object({...})).default({ key: 'val' })" → "z.object({...}).default({ key: 'val' })"
+    # Array defaults like "})).default([])" are NOT matched (left intact).
+    normalized = re.sub(r'\}\)\)\.default\(\{', '}).default({', normalized)
+
+    # Fix: LLM writes "const Schema: z.ZodType<{ field: z.string().max(30) }>" which is
+    # invalid TypeScript (runtime method call inside a type position). Strip the annotation.
+    normalized = re.sub(
+        r'const\s+Schema\s*:[\s\S]*?(?=\s*=\s*z\.)',
+        'const Schema',
+        normalized,
+    )
+
+    # Fix: LLM wraps the schema in a template literal: "const Schema = `\nconst Schema = z.object..."
+    # The actual declaration is on the next line, so remove the whole "const Schema = `\n" line.
+    normalized = re.sub(r'const\s+Schema\s*=\s*`\s*\n?', '', normalized)
+    # Remove any leftover trailing standalone backtick (the closing end of that template literal).
+    normalized = re.sub(r'`\s*;?\s*$', '', normalized)
+
     normalized = re.sub(
         r'(layoutId\s*=\s*["\'])([^"\']+)(["\'])',
         lambda match: (
@@ -551,9 +569,7 @@ async def edit_slide_layout(
         system_prompt=SLIDE_LAYOUT_EDIT_SYSTEM_PROMPT,
         user_text=user_text,
     )
-    return EditSlideLayoutResponse(
-        react_component=_normalize_asset_fields(_strip_code_fences(react_component))
-    )
+    return EditSlideLayoutResponse(react_component=_strip_code_fences(react_component))
 
 
 async def edit_slide_layout_section(
@@ -569,7 +585,7 @@ async def edit_slide_layout_section(
         user_text=user_text,
     )
     return EditSlideLayoutSectionResponse(
-        react_component=_normalize_asset_fields(_strip_code_fences(react_component))
+        react_component=_strip_code_fences(react_component)
     )
 
 

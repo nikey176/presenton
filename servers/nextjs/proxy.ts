@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthDisabled } from "@/utils/auth";
 
 /**
  * API-only: session required for all /api/* except auth, telemetry, and
@@ -26,8 +25,22 @@ type AuthStatus = {
   authenticated: boolean;
 };
 
+function isAuthDisabled(): boolean {
+  const raw = process.env.DISABLE_AUTH?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 const SESSION_COOKIE_NAME = "presenton_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const PDF_MAKER_OFFLINE_CSP = [
+  "default-src 'self' data: blob:",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
 
 async function getAuthStatus(request: NextRequest): Promise<AuthStatus> {
   const cookieHeader = request.headers.get("cookie");
@@ -57,7 +70,6 @@ function isApiAuthExempt(pathname: string): boolean {
     pathname === "/api/telemetry-status" ||
     /** FastAPI `get_layout_by_name` fallback (no browser cookie in Docker). */
     pathname === "/api/template" ||
-    pathname === "/api/template/custom" ||
     pathname.startsWith("/api/export-presentation-data/")
   );
 }
@@ -72,6 +84,7 @@ export async function proxy(request: NextRequest) {
       redirectUrl.searchParams.delete("exportSession");
 
       const response = NextResponse.redirect(redirectUrl);
+      response.headers.set("Content-Security-Policy", PDF_MAKER_OFFLINE_CSP);
       response.cookies.set({
         name: SESSION_COOKIE_NAME,
         value: exportSession,
@@ -86,7 +99,9 @@ export async function proxy(request: NextRequest) {
       return response;
     }
 
-    return NextResponse.next();
+    const response = NextResponse.next();
+    response.headers.set("Content-Security-Policy", PDF_MAKER_OFFLINE_CSP);
+    return response;
   }
 
   if (isAuthDisabled()) {
