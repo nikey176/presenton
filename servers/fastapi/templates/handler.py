@@ -163,6 +163,33 @@ def _strip_code_fences(value: str) -> str:
     )
 
 
+def _strip_imports_and_exports(code: str) -> str:
+    """Strip import/export statements from LLM-generated layout code.
+
+    Safe to call on already-normalized code (does not modify __image_url__ etc.).
+    """
+    normalized = _strip_code_fences(code)
+    # Convert "export const/function/class X" → bare declaration
+    normalized = re.sub(
+        r"(?m)^\s*export\s+((?:const|let|var|function|class)\b)",
+        r"\1",
+        normalized,
+    )
+    # "export default function/class X" → "function/class X"
+    normalized = re.sub(
+        r"(?m)^\s*export\s+default\s+((?:function|class)\b)",
+        r"\1",
+        normalized,
+    )
+    # Remove grouped export statements and "export default X"
+    normalized = re.sub(r"(?ms)^\s*export\s*\{[^}]*\}\s*;?[ \t]*(\r?\n|$)", "", normalized)
+    normalized = re.sub(r"(?m)^\s*export\s+default\b[^\n]*(\r?\n|$)", "", normalized)
+    # Strip all remaining import/export lines (handles import type, unknown packages, multiline)
+    normalized = re.sub(r"(?ms)^\s*(?:import|export)\b.*?;(?:\r?\n|$)", "", normalized)
+    normalized = re.sub(r"(?m)^\s*(?:import|export)\b.*(?:\r?\n|$)", "", normalized)
+    return normalized.strip()
+
+
 def _normalize_layout_code_for_create(code: str) -> str:
     normalized = _strip_code_fences(code)
     normalized = (
@@ -216,6 +243,57 @@ def _normalize_layout_code_for_create(code: str) -> str:
     # the `const Table = 'table'` pre-declaration injected by the JS compile sandbox.
     # Must run after the longer Table* names have already been replaced above.
     normalized = re.sub(r"\bTable\b", "table", normalized)
+
+    # Fix: <table> with <tr> as direct JSX children (no <tbody>) causes React's
+    # "insertBefore: not a child of this node" error because browsers auto-insert <tbody>,
+    # making the actual DOM differ from React's virtual DOM.
+    # Wrap the content in <tbody> when no structural element (<thead>/<tbody>/<tfoot>) exists.
+    def _wrap_table_tbody(m: re.Match) -> str:
+        table_open, content, table_close = m.group(1), m.group(2), m.group(3)
+        if re.search(r"<\s*t(?:head|body|foot)\b", content):
+            return m.group(0)
+        if not re.search(r"<\s*tr\b", content):
+            return m.group(0)
+        return f"{table_open}<tbody>{content}</tbody>{table_close}"
+
+    normalized = re.sub(
+        r"(<table(?:\s[^>]*)?>)((?:(?!</?table\b).)*?)(</table>)",
+        _wrap_table_tbody,
+        normalized,
+        flags=re.DOTALL,
+    )
+
+    # Fix: React "insertBefore" error caused by inner component definitions.
+    # When const UpperCaseName = () => (...) is defined INSIDE dynamicSlideLayout,
+    # React gets a new function reference on every re-render → unmounts/remounts all
+    # instances → DOM reconciliation fails with "insertBefore: not a child of this node".
+    # Solution: hoist such components to module scope (before the layout function).
+    hoisted_components: list[str] = []
+
+    def _hoist_component(m: re.Match) -> str:
+        # full match includes leading \n + indent; strip to get the bare declaration
+        hoisted_components.append(m.group(0).lstrip("\n"))
+        return ""  # remove from function body
+
+    normalized = re.sub(
+        # \n + 2-4 spaces indent + const UpperName = (...) => (  ...body...  \n<same-indent>);
+        r"\n( {2,4})(const\s+[A-Z][a-zA-Z0-9]+\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)"
+        r"\s*(?::\s*[^\n>]*?)?\s*=>\s*\()([\s\S]*?)(\n\1\);)",
+        _hoist_component,
+        normalized,
+    )
+
+    if hoisted_components:
+        # Insert hoisted components before the layout function declaration
+        layout_match = re.search(r"\n(?:function|const)\s+dynamicSlideLayout\b", normalized)
+        if layout_match:
+            pos = layout_match.start()
+            normalized = (
+                normalized[:pos]
+                + "\n\n"
+                + "\n\n".join(hoisted_components)
+                + normalized[pos:]
+            )
 
     # Fix: LLM writes ".description(...)" but bundled Zod only has ".describe(...)"
     normalized = normalized.replace(".description(", ".describe(")
@@ -569,7 +647,7 @@ async def edit_slide_layout(
         system_prompt=SLIDE_LAYOUT_EDIT_SYSTEM_PROMPT,
         user_text=user_text,
     )
-    return EditSlideLayoutResponse(react_component=_strip_code_fences(react_component))
+    return EditSlideLayoutResponse(react_component=_strip_imports_and_exports(react_component))
 
 
 async def edit_slide_layout_section(
@@ -585,7 +663,7 @@ async def edit_slide_layout_section(
         user_text=user_text,
     )
     return EditSlideLayoutSectionResponse(
-        react_component=_strip_code_fences(react_component)
+        react_component=_strip_imports_and_exports(react_component)
     )
 
 
@@ -752,7 +830,7 @@ async def save_slide_layout(
     if not layout:
         raise HTTPException(status_code=400, detail="Layout not found")
 
-    layout.layout_code = request.layout_code
+    layout.layout_code = _strip_imports_and_exports(request.layout_code)
     sql_session.add(layout)
     await sql_session.commit()
 

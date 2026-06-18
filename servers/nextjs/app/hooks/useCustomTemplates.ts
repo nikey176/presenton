@@ -77,6 +77,17 @@ function normalizeCustomTemplateId(id: string): string {
     return id.startsWith("custom-") ? id.slice("custom-".length) : id;
 }
 
+function resolveCustomTemplateLayoutId(
+    compiledLayoutId: string | undefined,
+    rawLayoutId: string
+): string {
+    const normalizedCompiledId = compiledLayoutId?.trim();
+    if (!normalizedCompiledId || normalizedCompiledId === "custom-layout") {
+        return rawLayoutId;
+    }
+    return normalizedCompiledId;
+}
+
 /**
  * Fetch + compile ONLY the first layout for a custom template.
  * Accepts either a raw presentationId or a "custom-..." id.
@@ -162,8 +173,13 @@ export async function getCustomTemplateDetails(
                     const compiled = compileCustomLayout(layout.layout_code);
 
                     if (compiled) {
+                        const resolvedLayoutId = resolveCustomTemplateLayoutId(
+                            compiled.layoutId,
+                            layout.layout_id
+                        );
                         compiledLayouts.push({
                             ...compiled,
+                            layoutId: resolvedLayoutId,
                             templateId: layout.template,
                             rawLayoutId: layout.layout_id,
                             rawLayoutName: layout.layout_name,
@@ -311,14 +327,18 @@ export function useCustomTemplateDetails(templateDetail: { id: string, name: str
                         const compiled = compileCustomLayout(layout.layout_code);
 
                         if (compiled) {
+                            const resolvedLayoutId = resolveCustomTemplateLayoutId(
+                                compiled.layoutId,
+                                layout.layout_id
+                            );
                             compiledLayouts.push({
                                 ...compiled,
+                                layoutId: resolvedLayoutId,
                                 templateId: layout.template,
                                 rawLayoutId: layout.layout_id,
                                 rawLayoutName: layout.layout_name,
                                 layoutCode: layout.layout_code,
                                 fonts: layout.fonts,
-                                layoutId: compiled?.layoutId ?? "",
                             });
                         } else {
                             console.warn(`Failed to compile layout: ${layout.layout_name}`);
@@ -403,7 +423,7 @@ export function useCustomTemplatePreview(presentationId: string) {
                         if (result) {
                             compiled.push(result);
                         }
-                    } catch (e) {
+                    } catch {
                         console.warn(`Failed to compile preview: ${layout.layout_name}`);
                     }
                 }

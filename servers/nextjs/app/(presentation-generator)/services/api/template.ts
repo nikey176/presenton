@@ -28,7 +28,23 @@ class TemplateService {
 
     static async getCustomTemplateDetails(templateId: string) {
         try {
-            const response = await fetch(getApiUrl(`/api/v1/ppt/template/${templateId}/layouts`),);
+            // During export (Puppeteer/pdf-maker), the headless browser has no session
+            // cookie. The export cookie is stored in the URL hash as exportCookie=<full-cookie>.
+            // We proxy through a NextJS route that forwards it to FastAPI.
+            const exportCookie = typeof window !== "undefined"
+                ? new URLSearchParams(window.location.hash.replace(/^#/, "")).get("exportCookie") ?? undefined
+                : undefined;
+
+            const url = exportCookie
+                ? `/api/export-template-layouts/${templateId}`
+                : getApiUrl(`/api/v1/ppt/template/${templateId}/layouts`);
+
+            const headers: Record<string, string> = {};
+            if (exportCookie) {
+                headers["x-export-cookie"] = exportCookie;
+            }
+
+            const response = await fetch(url, { headers });
             return await ApiResponseHandler.handleResponse(response, "Failed to get custom template details");
         } catch (error) {
             console.error("Failed to get custom template details", error);

@@ -55,21 +55,50 @@ const RESERVED_FOR_LUCIDE = new Set([
     "Table",
 ]);
 
-let lucideBindingLinesCache: string | null = null;
+function isLucideComponent(value: unknown): boolean {
+    return typeof value === "function" || (typeof value === "object" && value !== null);
+}
 
-function getLucideBindingLines(): string {
-    if (lucideBindingLinesCache !== null) {
-        return lucideBindingLinesCache;
+function getLucideBindingLines(layoutCode: string): string {
+    const requestedBindings = new Map<string, string>();
+    const declaredComponents = new Set<string>();
+    const bindings: string[] = [];
+
+    for (const match of layoutCode.matchAll(
+        /\b(?:const|let|var|function|class)\s+([A-Z][A-Za-z0-9_$]*)\b/g
+    )) {
+        declaredComponents.add(match[1]);
     }
-    const lines: string[] = [];
-    for (const name of Object.keys(LucideReact)) {
-        if (!/^[A-Z]/.test(name)) continue;
-        if (RESERVED_FOR_LUCIDE.has(name)) continue;
-        if (name === "Icon" || name === "LucideIcon") continue;
-        lines.push(`const ${name} = _Lucide[${JSON.stringify(name)}];`);
+
+    const importPattern = /import\s+\{([\s\S]*?)\}\s+from\s+['"]lucide-react['"];?/g;
+    for (const match of layoutCode.matchAll(importPattern)) {
+        const specifiers = match[1].split(",");
+        for (const specifier of specifiers) {
+            const [importedName, localName = importedName] = specifier.trim().split(/\s+as\s+/);
+            if (!importedName || !/^[A-Z][A-Za-z0-9_$]*$/.test(localName)) continue;
+            requestedBindings.set(localName, importedName);
+        }
     }
-    lucideBindingLinesCache = lines.join("\n");
-    return lucideBindingLinesCache;
+
+    // Generated layouts sometimes omit Lucide imports; bind any unresolved capitalized JSX component.
+    for (const match of layoutCode.matchAll(/<\s*([A-Z][A-Za-z0-9_$]*)(?![A-Za-z0-9_$.])/g)) {
+        const componentName = match[1];
+        if (!requestedBindings.has(componentName)) {
+            requestedBindings.set(componentName, componentName);
+        }
+    }
+
+    for (const [localName, importedName] of requestedBindings) {
+        if (RESERVED_FOR_LUCIDE.has(localName)) continue;
+        if (localName === "Icon" || localName === "LucideIcon") continue;
+        if (declaredComponents.has(localName)) continue;
+        const resolvedName = isLucideComponent((LucideReact as Record<string, unknown>)[importedName])
+            ? importedName
+            : "CircleHelp";
+        bindings.push(`const ${localName} = _Lucide[${JSON.stringify(resolvedName)}];`);
+    }
+
+    return bindings.join("\n");
 }
 
 export interface CompiledLayout {
@@ -150,7 +179,6 @@ function buildSampleFromSchemaJSON(schema: Record<string, any>): Record<string, 
  * Compiles a layout code string into a usable React component
  */
 export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
-    console.log('compileCustomLayout called');
     try {
         const normalizedLayoutCode = normalizeHardcodedBackendUrlsInCode(layoutCode);
 
@@ -172,12 +200,18 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
             .replace(/import\s+[\w$]+\s+from\s+['"]lucide-react['"];?\s*/g, "")
             // Remove other common imports we'll provide
             .replace(/import\s+.*\s+from\s+['"]@\/[^'"]+['"];?/g, "")
+            // Catch-all: strip any remaining import statements not handled above
+            // (e.g. "import type { ... } from 'react'", "import X from 'framer-motion'")
+            // Uses multiline mode so ^ matches each line; [\s\S]*? spans multi-line imports.
+            .replace(/^import\b[\s\S]*?;[ \t]*(\n|$)/gm, "")
             // Convert "export const/function/class X" → declaration only (keeps the variable)
             .replace(/\bexport\s+((?:const|let|var|function|class)\s)/g, "$1")
+            // Convert "export default function/class X" → "function/class X"
+            .replace(/\bexport\s+default\s+((?:function|class)\s)/g, "$1")
             // Remove grouped exports: export { ... }
             .replace(/export\s*\{[^}]*\}\s*;?/g, "")
-            // Remove export default
-            .replace(/export\s+default\s+\w+;?\s*$/g, "")
+            // Remove remaining "export default X" (identifier or expression)
+            .replace(/\bexport\s+default\b[^\n]*(\n|$)/g, "$1")
             // Fix: LLM writes ".description(...)" but bundled Zod only has ".describe(...)"
             .replace(/\.description\(/g, ".describe(")
             // Fix: LLM uses Icon-prefixed Lucide names (IconCheck → Check, IconStar → Star)
@@ -195,9 +229,42 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
             // Handles both "\n`;" and "};`" end patterns.
             .replace(/`\s*;?\s*$/g, "");
 
+        // Fix: <table> with <tr> as direct JSX children (no <tbody>) causes React's
+        // "insertBefore: not a child of this node" DOM error — browsers auto-insert <tbody>
+        // between <table> and <tr>, making the actual DOM differ from React's virtual DOM.
+        // Wrap table content in <tbody> when no structural element exists.
+        const withTbody = cleanCode.replace(
+            /(<table(?:\s[^>]*)?>)([\s\S]*?)(<\/table>)/g,
+            (match, tableOpen, content, tableClose) => {
+                if (/< *t(?:head|body|foot)\b/.test(content)) return match;
+                if (!/<\s*tr\b/.test(content)) return match;
+                return `${tableOpen}<tbody>${content}</tbody>${tableClose}`;
+            }
+        );
+
+        // Fix: React "insertBefore" error from inner component definitions.
+        // const UpperName = (...) => (...) inside dynamicSlideLayout creates a new
+        // function reference on every re-render. React sees a different component type,
+        // unmounts/remounts all instances, and DOM reconciliation fails.
+        // Solution: hoist such components to module scope before the layout function.
+        const hoisted: string[] = [];
+        const innerComponentRe = /\n( {2,4})(const\s+[A-Z][a-zA-Z0-9]+\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?::\s*[^\n>]*?)?\s*=>\s*\()([\s\S]*?)(\n\1\);)/g;
+        const withoutInner = withTbody.replace(innerComponentRe, (match) => {
+            hoisted.push(match.trimStart());
+            return "";
+        });
+        const fixedCode = hoisted.length > 0
+            ? (() => {
+                const insertAt = withoutInner.search(/\n(?:function|const)\s+dynamicSlideLayout\b/);
+                return insertAt === -1
+                    ? hoisted.join("\n\n") + "\n\n" + withoutInner
+                    : withoutInner.slice(0, insertAt) + "\n\n" + hoisted.join("\n\n") + withoutInner.slice(insertAt);
+            })()
+            : withoutInner;
 
 
-        const compiled = Babel.transform(cleanCode, {
+
+        const compiled = Babel.transform(fixedCode, {
             presets: [
                 ["react", { runtime: "classic" }],
                 ["typescript", { isTSX: true, allExtensions: true }],
@@ -206,7 +273,7 @@ export function compileCustomLayout(layoutCode: string): CompiledLayout | null {
         }).code;
 
         // Create a factory function that executes the compiled code
-        const lucideBindings = getLucideBindingLines();
+        const lucideBindings = getLucideBindingLines(normalizedLayoutCode);
 
         // Only inject Table alias if the compiled code doesn't already declare it —
         // avoids "Identifier 'Table' has already been declared" for layouts that use

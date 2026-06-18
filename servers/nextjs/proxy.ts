@@ -37,7 +37,7 @@ const PDF_MAKER_OFFLINE_CSP = [
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
   "connect-src 'self'",
   "frame-ancestors 'none'",
 ].join("; ");
@@ -70,7 +70,8 @@ function isApiAuthExempt(pathname: string): boolean {
     pathname === "/api/telemetry-status" ||
     /** FastAPI `get_layout_by_name` fallback (no browser cookie in Docker). */
     pathname === "/api/template" ||
-    pathname.startsWith("/api/export-presentation-data/")
+    pathname.startsWith("/api/export-presentation-data/") ||
+    pathname.startsWith("/api/export-template-layouts/")
   );
 }
 

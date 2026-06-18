@@ -34,13 +34,27 @@ export const V1ContentRender = ({ slide, isEditMode, theme }: { slide: any, isEd
     const Layout = useMemo(() => {
         if (isCustomTemplate) {
             if (customTemplate) {
-                const layoutId = slide.layout.startsWith("custom-") ? slide.layout.split(":")[1] : slide.layout;
+                // Extract the layout ID portion after "custom-<uuid>:"
+                const colonIdx = slide.layout.indexOf(":");
+                const layoutId = colonIdx !== -1 ? slide.layout.slice(colonIdx + 1) : slide.layout;
 
-
-                const compiledLayout = customTemplate.layouts.find(
-                    (layout) => layout.layoutId === layoutId
+                // Exact match first
+                let compiledLayout = customTemplate.layouts.find(
+                    (layout) =>
+                        layout.layoutId === layoutId ||
+                        layout.rawLayoutId === layoutId
                 );
 
+                // Fallback: match by base name ignoring the 4-digit random suffix
+                // (handles cases where layout code was regenerated with a new suffix)
+                if (!compiledLayout && /^.+-\d{4}$/.test(layoutId)) {
+                    const baseId = layoutId.replace(/-\d{4}$/, "");
+                    compiledLayout = customTemplate.layouts.find(
+                        (l) =>
+                            l.layoutId.replace(/-\d{4}$/, "") === baseId ||
+                            l.rawLayoutId.replace(/-\d{4}$/, "") === baseId
+                    );
+                }
 
                 return compiledLayout?.component ?? null;
             }
@@ -49,7 +63,7 @@ export const V1ContentRender = ({ slide, isEditMode, theme }: { slide: any, isEd
             const template = getLayoutByLayoutId(slide.layout, slide.layout_group);
             return template?.component ?? null;
         }
-    }, [isCustomTemplate, customTemplate, slide.layout]);
+    }, [isCustomTemplate, customTemplate, slide.layout, slide.layout_group]);
 
     // Show loading state for custom templates
     if (isCustomTemplate && customLoading) {
@@ -145,4 +159,3 @@ export const V1ContentRender = ({ slide, isEditMode, theme }: { slide: any, isEd
         </SlideErrorBoundary>
     );
 };
-

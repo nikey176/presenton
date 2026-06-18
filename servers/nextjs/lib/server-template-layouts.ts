@@ -129,7 +129,11 @@ export function buildCustomTemplateLayoutPayload(
     const compiled = compileTemplateSchema(layout.layout_code);
     if (!compiled) continue;
 
-    const rawId = compiled.layoutId || layout.layout_id;
+    const compiledId = compiled.layoutId?.trim();
+    const rawId =
+      !compiledId || compiledId === "custom-layout"
+        ? layout.layout_id
+        : compiledId;
     const qualifiedId = rawId.includes(":") ? rawId : `${group}:${rawId}`;
 
     slides.push({
